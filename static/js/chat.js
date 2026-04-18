@@ -167,12 +167,32 @@ export function appendStreamDelta(msgEl, delta) {
   const typing = body.querySelector(".typing-indicator");
   if (typing) {
     body.innerHTML = "";
-    const cursor = document.createElement("span");
-    cursor.className = "stream-cursor";
-    body.appendChild(cursor);
+    msgEl._streamText = "";
   }
-  const cursor = body.querySelector(".stream-cursor");
-  body.insertBefore(document.createTextNode(delta), cursor);
+  msgEl._streamText = (msgEl._streamText || "") + delta;
+
+  if (msgEl._renderScheduled) return;
+  msgEl._renderScheduled = true;
+  requestAnimationFrame(() => {
+    msgEl._renderScheduled = false;
+    renderStreamingMarkdown(msgEl);
+  });
+}
+
+function renderStreamingMarkdown(msgEl) {
+  const body = msgEl.querySelector(".message-body");
+  if (!body) return;
+  const text = msgEl._streamText || "";
+  if (typeof marked !== "undefined") {
+    marked.setOptions({ breaks: true, gfm: true });
+    body.innerHTML = marked.parse(text);
+    body.querySelectorAll("a").forEach(a => { a.target = "_blank"; a.rel = "noopener noreferrer"; });
+  } else {
+    body.textContent = text;
+  }
+  const cursor = document.createElement("span");
+  cursor.className = "stream-cursor";
+  body.appendChild(cursor);
   scrollToBottom();
 }
 

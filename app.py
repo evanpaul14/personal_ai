@@ -19,6 +19,7 @@ app = Flask(__name__, static_folder="static", template_folder="templates")
 app.secret_key = config.SECRET_KEY
 
 os.makedirs(config.UPLOAD_DIR, exist_ok=True)
+init_db()
 
 client = OpenAI(
     api_key=config.OPENROUTER_API_KEY,
@@ -410,5 +411,4 @@ def _auto_title(cid, first_message):
         update_conversation(cid, title=title)
 
 if __name__ == "__main__":
-    init_db()
     app.run(host="0.0.0.0", port=8001, debug=False)

@@ -29,29 +29,72 @@ CREATE TABLE IF NOT EXISTS messages (
 
 CREATE VIRTUAL TABLE IF NOT EXISTS messages_fts USING fts5(
     content,
-    conversation_id UNINDEXED,
-    message_id UNINDEXED,
     content='messages',
     content_rowid='rowid'
 );
 
 CREATE TRIGGER IF NOT EXISTS messages_ai AFTER INSERT ON messages BEGIN
-    INSERT INTO messages_fts(rowid, content, conversation_id, message_id)
-    VALUES (new.rowid, new.content, new.conversation_id, new.id);
+    INSERT INTO messages_fts(rowid, content)
+    VALUES (new.rowid, new.content);
 END;
 
 CREATE TRIGGER IF NOT EXISTS messages_ad AFTER DELETE ON messages BEGIN
-    INSERT INTO messages_fts(messages_fts, rowid, content, conversation_id, message_id)
-    VALUES ('delete', old.rowid, old.content, old.conversation_id, old.id);
+    INSERT INTO messages_fts(messages_fts, rowid, content)
+    VALUES ('delete', old.rowid, old.content);
+END;
+
+CREATE TRIGGER IF NOT EXISTS messages_au AFTER UPDATE OF content ON messages BEGIN
+    INSERT INTO messages_fts(messages_fts, rowid, content)
+    VALUES ('delete', old.rowid, old.content);
+    INSERT INTO messages_fts(rowid, content)
+    VALUES (new.rowid, new.content);
 END;
 
 CREATE INDEX IF NOT EXISTS idx_messages_conv ON messages(conversation_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_conversations_updated ON conversations(updated_at DESC);
 """
 
+def _ensure_fts_schema(db):
+    # Older installs created an incompatible FTS schema with extra columns.
+    # Recreate the virtual table/triggers so search works against existing DBs.
+    cols = [r["name"] for r in db.execute("PRAGMA table_info(messages_fts)").fetchall()]
+    if cols == ["content"]:
+        return
+
+    db.executescript("""
+DROP TRIGGER IF EXISTS messages_ai;
+DROP TRIGGER IF EXISTS messages_ad;
+DROP TRIGGER IF EXISTS messages_au;
+DROP TABLE IF EXISTS messages_fts;
+
+CREATE VIRTUAL TABLE messages_fts USING fts5(
+    content,
+    content='messages',
+    content_rowid='rowid'
+);
+
+CREATE TRIGGER messages_ai AFTER INSERT ON messages BEGIN
+    INSERT INTO messages_fts(rowid, content)
+    VALUES (new.rowid, new.content);
+END;
+
+CREATE TRIGGER messages_ad AFTER DELETE ON messages BEGIN
+    INSERT INTO messages_fts(messages_fts, rowid, content)
+    VALUES ('delete', old.rowid, old.content);
+END;
+
+CREATE TRIGGER messages_au AFTER UPDATE OF content ON messages BEGIN
+    INSERT INTO messages_fts(messages_fts, rowid, content)
+    VALUES ('delete', old.rowid, old.content);
+    INSERT INTO messages_fts(rowid, content)
+    VALUES (new.rowid, new.content);
+END;
+""")
+
 def init_db():
     with get_db() as db:
         db.executescript(SCHEMA)
+        _ensure_fts_schema(db)
         # Rebuild FTS index to cover any messages inserted before triggers existed
         try:
             db.execute("INSERT INTO messages_fts(messages_fts) VALUES('rebuild')")
@@ -163,26 +206,23 @@ def search_messages(query, limit=20):
     if not fts_q:
         return []
     with get_db() as db:
-        try:
-            # Use control-char markers (STX/ETX, 0x02/0x03) instead of literal
-            # HTML so the frontend can HTML-escape user-authored content safely
-            # and then substitute the markers for <mark>…</mark>.
-            rows = db.execute("""
-                SELECT
-                    f.conversation_id,
-                    c.title as conversation_title,
-                    c.system_prompt as conversation_system_prompt,
-                    f.message_id,
-                    m.role,
-                    snippet(messages_fts, 0, char(2), char(3), '...', 20) as snippet,
-                    m.created_at
-                FROM messages_fts f
-                JOIN conversations c ON c.id = f.conversation_id
-                JOIN messages m ON m.id = f.message_id
-                WHERE messages_fts MATCH ?
-                ORDER BY rank
-                LIMIT ?
-            """, (fts_q, limit)).fetchall()
-        except Exception:
-            rows = []
+        # Use control-char markers (STX/ETX, 0x02/0x03) instead of literal
+        # HTML so the frontend can HTML-escape user-authored content safely
+        # and then substitute the markers for <mark>…</mark>.
+        rows = db.execute("""
+            SELECT
+                m.conversation_id,
+                c.title as conversation_title,
+                c.system_prompt as conversation_system_prompt,
+                m.id as message_id,
+                m.role,
+                snippet(messages_fts, 0, char(2), char(3), '...', 20) as snippet,
+                m.created_at
+            FROM messages_fts
+            JOIN messages m ON m.rowid = messages_fts.rowid
+            JOIN conversations c ON c.id = m.conversation_id
+            WHERE messages_fts MATCH ?
+            ORDER BY bm25(messages_fts), m.created_at DESC
+            LIMIT ?
+        """, (fts_q, limit)).fetchall()
         return [dict(r) for r in rows]
