@@ -1,0 +1,227 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, viewport-fit=cover" />
+  <meta name="theme-color" content="#282a36" />
+  <meta name="description" content="Personal AI — terminal chat interface" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <title>personal_ai</title>
+  <link rel="manifest" href="/static/manifest.json" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:ital,wght@0,100..800;1,100..800&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/static/css/main.css" />
+</head>
+<body>
+
+<!-- CRT scanline overlay -->
+<div class="scanlines" aria-hidden="true"></div>
+
+<!-- Sidebar -->
+<aside id="sidebar" role="navigation" aria-label="Conversations">
+  <div class="sidebar-header">
+    <div class="logo-bar">
+      <span class="logo-text">[personal_ai]</span>
+      <span class="logo-cursor" aria-hidden="true">_</span>
+    </div>
+    <button id="new-chat-btn" class="btn-icon btn-new" title="New chat" aria-label="New chat">
+      <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+        <line x1="8" y1="2" x2="8" y2="14"/><line x1="2" y1="8" x2="14" y2="8"/>
+      </svg>
+    </button>
+  </div>
+
+  <div class="search-wrap">
+    <span class="search-prefix" aria-hidden="true">/</span>
+    <input
+      id="search-input"
+      type="search"
+      placeholder="search chats..."
+      autocomplete="off"
+      spellcheck="false"
+      aria-label="Search conversations"
+    />
+  </div>
+
+  <div id="conversation-list" role="list" aria-label="Chat history">
+    <!-- Populated by history.js -->
+  </div>
+
+  <div id="search-results" class="search-results hidden" role="list" aria-label="Search results">
+    <!-- Populated on search -->
+  </div>
+
+  <div class="sidebar-footer">
+    <label class="incognito-toggle" title="Incognito — chats won't be saved">
+      <input type="checkbox" id="incognito-checkbox" aria-label="Incognito mode" />
+      <span class="toggle-track">
+        <svg class="ghost-icon" width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+          <path d="M12 2C7.03 2 3 6.03 3 11v8l3-3 2 2 2-2 2 2 2-2 3 3v-8c0-4.97-4.03-9-9-9z"/>
+          <circle cx="9" cy="11" r="1.5" fill="#282a36"/>
+          <circle cx="15" cy="11" r="1.5" fill="#282a36"/>
+        </svg>
+        <span class="toggle-label">incognito</span>
+      </span>
+    </label>
+    <span class="version-tag">v1.0</span>
+  </div>
+</aside>
+
+<!-- Sidebar overlay (mobile) -->
+<div id="sidebar-overlay" class="sidebar-overlay hidden" aria-hidden="true"></div>
+
+<!-- Main area -->
+<main id="main">
+
+  <!-- Tools warning banner -->
+  <div id="tools-warning" class="tools-warning hidden" role="alert">
+    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+    <span id="tools-warning-text">this model does not support tools</span>
+  </div>
+
+  <!-- Top bar -->
+  <header id="topbar">
+    <button id="hamburger" class="btn-icon" aria-label="Toggle sidebar" aria-expanded="false" aria-controls="sidebar">
+      <svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+        <line x1="2" y1="4" x2="16" y2="4"/>
+        <line x1="2" y1="9" x2="16" y2="9"/>
+        <line x1="2" y1="14" x2="16" y2="14"/>
+      </svg>
+    </button>
+
+    <div id="incognito-badge" class="incognito-badge hidden" aria-live="polite">
+      <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+        <path d="M12 2C7.03 2 3 6.03 3 11v8l3-3 2 2 2-2 2 2 2-2 3 3v-8c0-4.97-4.03-9-9-9z"/>
+        <circle cx="9" cy="11" r="1.5" fill="#282a36"/>
+        <circle cx="15" cy="11" r="1.5" fill="#282a36"/>
+      </svg>
+      <span>incognito</span>
+    </div>
+
+    <div class="topbar-center">
+      <div class="model-select-wrap" id="model-dropdown-wrap">
+        <span class="model-prefix" aria-hidden="true">model:&nbsp;</span>
+        <div class="model-dropdown" id="model-dropdown" role="combobox" aria-haspopup="listbox" aria-expanded="false">
+          <button class="model-trigger" id="model-trigger" type="button" aria-label="Select AI model">
+            <span id="model-trigger-text">loading...</span>
+            <svg class="model-chevron" width="10" height="6" viewBox="0 0 10 6" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true"><path d="M1 1l4 4 4-4"/></svg>
+          </button>
+          <div class="model-dropdown-panel hidden" id="model-panel" role="listbox">
+            <div class="model-search-wrap">
+              <input type="text" id="model-search" class="model-search-input" placeholder="filter models..." autocomplete="off" spellcheck="false" aria-label="Filter models" />
+            </div>
+            <div class="model-list" id="model-list"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <button id="settings-btn" class="btn-icon" title="System prompt" aria-label="System prompt settings">
+      <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <circle cx="12" cy="12" r="3"/>
+        <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>
+      </svg>
+    </button>
+  </header>
+
+  <!-- Chat viewport -->
+  <div id="chat-viewport" role="log" aria-live="polite" aria-label="Chat messages">
+    <div id="empty-state" class="empty-state">
+      <div class="empty-prompt">
+        <span class="empty-blink">▋</span>
+        <span class="empty-text"> select a model and start typing</span>
+      </div>
+    </div>
+    <div id="messages-container"></div>
+  </div>
+
+  <!-- Image preview strip -->
+  <div id="upload-preview" class="upload-preview hidden" role="region" aria-label="Image upload preview">
+    <div id="preview-inner"></div>
+    <button id="clear-upload" class="btn-clear-upload" aria-label="Remove image">
+      <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+        <line x1="1" y1="1" x2="11" y2="11"/><line x1="11" y1="1" x2="1" y2="11"/>
+      </svg>
+    </button>
+  </div>
+
+  <!-- Input bar -->
+  <div id="input-bar" role="form" aria-label="Send message">
+    <button id="upload-btn" class="btn-icon btn-upload hidden" title="Attach image" aria-label="Attach image">
+      <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <rect x="3" y="3" width="18" height="18" rx="2" ry="2"/>
+        <circle cx="8.5" cy="8.5" r="1.5"/>
+        <polyline points="21 15 16 10 5 21"/>
+      </svg>
+    </button>
+    <input type="file" id="file-input" accept="image/*" hidden aria-label="Choose image file" />
+
+    <div class="input-wrap">
+      <span class="input-prefix" aria-hidden="true">&gt;&nbsp;</span>
+      <textarea
+        id="message-input"
+        placeholder="type a message... (Enter to send, Shift+Enter for newline)"
+        rows="1"
+        spellcheck="false"
+        autocomplete="off"
+        aria-label="Message input"
+      ></textarea>
+    </div>
+
+    <button id="send-btn" class="btn-send" aria-label="Send message" title="Send (Ctrl+Enter)">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+        <line x1="22" y1="2" x2="11" y2="13"/>
+        <polygon points="22 2 15 22 11 13 2 9 22 2"/>
+      </svg>
+    </button>
+  </div>
+
+</main>
+
+<!-- Settings modal -->
+<div id="settings-modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="settings-title">
+  <div class="modal-backdrop"></div>
+  <div class="modal-box">
+    <div class="modal-header">
+      <h2 id="settings-title" class="modal-title">// system_prompt</h2>
+      <button id="settings-close" class="btn-icon" aria-label="Close settings">
+        <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+          <line x1="1" y1="1" x2="13" y2="13"/><line x1="13" y1="1" x2="1" y2="13"/>
+        </svg>
+      </button>
+    </div>
+    <textarea
+      id="system-prompt-input"
+      placeholder="You are a helpful assistant..."
+      rows="8"
+      spellcheck="false"
+      aria-label="System prompt"
+    ></textarea>
+    <div class="modal-reasoning">
+      <label class="reasoning-label" for="reasoning-toggle">
+        <span class="reasoning-text">
+          <span class="reasoning-name">enable reasoning / thinking</span>
+          <span class="reasoning-desc">models that support extended thinking (slower, uses more tokens)</span>
+        </span>
+        <div class="toggle-switch">
+          <input type="checkbox" id="reasoning-toggle" />
+          <span class="toggle-knob"></span>
+        </div>
+      </label>
+    </div>
+    <div class="modal-footer">
+      <span class="modal-hint">applies to current conversation</span>
+      <button id="settings-save" class="btn-primary">save</button>
+    </div>
+  </div>
+</div>
+
+<!-- Scripts -->
+<script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+<script type="module" src="/static/js/app.js"></script>
+
+</body>
+</html>
