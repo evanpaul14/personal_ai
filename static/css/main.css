@@ -356,9 +356,10 @@ body {
   align-items: center;
   gap: 8px;
   padding: 0 12px;
+  padding-top: env(safe-area-inset-top);
   padding-left: max(12px, env(safe-area-inset-left));
   padding-right: max(12px, env(safe-area-inset-right));
-  height: var(--topbar-h);
+  height: calc(var(--topbar-h) + env(safe-area-inset-top));
   background: var(--bg-alt);
   border-bottom: 1px solid var(--surface);
   flex-shrink: 0;

@@ -26,6 +26,32 @@ client = OpenAI(
     base_url=config.OPENROUTER_BASE_URL,
 )
 
+google_client = OpenAI(
+    api_key=config.GOOGLE_AI_STUDIO_API_KEY or "placeholder",
+    base_url=config.GOOGLE_AI_STUDIO_BASE_URL,
+) if config.GOOGLE_AI_STUDIO_API_KEY else None
+
+GOOGLE_AI_STUDIO_EXTRA_MODELS = [
+    {
+        "id": "google-ai-studio/gemma-4-26b-a4b-it",
+        "name": "Gemma 4 26B A4B Instruct",
+        "context_length": 32768,
+        "supports_vision": False,
+        "supports_tools": False,
+        "input_modalities": ["text"],
+        "pricing": {},
+    },
+    {
+        "id": "google-ai-studio/gemma-4-31b-it",
+        "name": "Gemma 4 31B Instruct",
+        "context_length": 32768,
+        "supports_vision": False,
+        "supports_tools": False,
+        "input_modalities": ["text"],
+        "pricing": {},
+    },
+]
+
 # --- Models cache ---
 _models_cache = {"data": None, "ts": 0}
 _models_lock = threading.Lock()
@@ -57,6 +83,8 @@ def get_models():
             "pricing": m.get("pricing", {}),
         })
     parsed.sort(key=lambda x: x["name"].lower())
+    if config.GOOGLE_AI_STUDIO_API_KEY:
+        parsed = GOOGLE_AI_STUDIO_EXTRA_MODELS + parsed
     with _models_lock:
         _models_cache["data"] = parsed
         _models_cache["ts"] = time.time()
@@ -256,6 +284,10 @@ def _agentic_loop(cid, model_id, system_prompt, history, user_text, image_path, 
     user_image_path = image_path
     is_first_message = not incognito and len(history) == 0
 
+    is_google = model_id.startswith("google-ai-studio/")
+    api_model_id = model_id[len("google-ai-studio/"):] if is_google else model_id
+    active_client = google_client if is_google and google_client else client
+
     reasoning_body = {"reasoning": {"effort": "medium"}} if reasoning_enabled else {"reasoning": {"exclude": True}}
     use_tools = _model_supports_tools(model_id)
     if not use_tools:
@@ -263,16 +295,17 @@ def _agentic_loop(cid, model_id, system_prompt, history, user_text, image_path, 
 
     while True:
         create_kwargs = dict(
-            model=model_id,
+            model=api_model_id,
             messages=messages,
             stream=True,
-            extra_body=reasoning_body,
         )
+        if not is_google:
+            create_kwargs["extra_body"] = reasoning_body
         if use_tools:
             create_kwargs["tools"] = TOOLS
             create_kwargs["tool_choice"] = "auto"
 
-        stream = client.chat.completions.create(**create_kwargs)
+        stream = active_client.chat.completions.create(**create_kwargs)
 
         content_parts = []
         tool_calls_map = {}
