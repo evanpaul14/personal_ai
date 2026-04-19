@@ -161,6 +161,25 @@ export function appendAssistantMessage(userText = null, showActions = true) {
   return wrap;
 }
 
+export function appendReasoningDelta(msgEl, delta) {
+  let block = msgEl.querySelector(".reasoning-block");
+  if (!block) {
+    block = document.createElement("details");
+    block.className = "reasoning-block";
+    block.innerHTML = `
+      <summary class="reasoning-summary">
+        <span class="reasoning-label">thinking</span>
+        <svg class="reasoning-chevron" width="10" height="6" viewBox="0 0 10 6" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M1 1l4 4 4-4"/></svg>
+      </summary>
+      <div class="reasoning-content"></div>`;
+    const body = msgEl.querySelector(".message-body");
+    msgEl.insertBefore(block, body);
+  }
+  const content = block.querySelector(".reasoning-content");
+  content.textContent = (content.textContent || "") + delta;
+  scrollToBottom();
+}
+
 export function appendStreamDelta(msgEl, delta) {
   const body = msgEl.querySelector(".message-body");
   // Clear typing indicator on first delta
@@ -269,7 +288,10 @@ export async function executeSend(cid, text, imageFile, incognito, systemPrompt)
   try {
     const stream = sendMessage(cid, text, imageFile, incognito, modelId, systemPrompt, reasoning);
     for await (const event of stream) {
-      if (event.type === "content_delta") {
+      if (event.type === "reasoning_delta") {
+        appendReasoningDelta(currentAssistantEl, event.delta);
+
+      } else if (event.type === "content_delta") {
         fullContent += event.delta;
         appendStreamDelta(currentAssistantEl, event.delta);
 

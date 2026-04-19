@@ -856,6 +856,61 @@ details[open] .tool-chevron { transform: rotate(180deg); }
   letter-spacing: 0.06em;
 }
 
+/* ============================================================
+   REASONING / THINKING BLOCK
+   ============================================================ */
+
+.reasoning-block {
+  margin: 0 0 8px;
+  border: 1px solid var(--surface);
+  border-left: 3px solid var(--cyan);
+  border-radius: var(--radius);
+  overflow: hidden;
+  font-size: 12px;
+  animation: msg-in 160ms ease-out both;
+}
+.reasoning-summary {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 6px 10px;
+  background: rgba(139,233,253,0.05);
+  cursor: pointer;
+  user-select: none;
+  list-style: none;
+  outline: none;
+  transition: background var(--transition);
+}
+.reasoning-summary::-webkit-details-marker { display: none; }
+.reasoning-summary:hover { background: rgba(139,233,253,0.09); }
+.reasoning-label {
+  color: var(--cyan);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+.reasoning-chevron {
+  margin-left: auto;
+  color: var(--text-dim);
+  transition: transform var(--transition);
+  flex-shrink: 0;
+}
+.reasoning-block[open] .reasoning-chevron { transform: rotate(180deg); }
+.reasoning-content {
+  padding: 8px 10px;
+  background: var(--bg-alt);
+  border-top: 1px solid var(--surface);
+  white-space: pre-wrap;
+  color: var(--text-dim);
+  font-size: 11px;
+  line-height: 1.55;
+  max-height: 280px;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: var(--surface) transparent;
+}
+
 /* Sandbox image in tool block */
 .sandbox-image {
   max-width: 100%;

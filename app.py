@@ -37,7 +37,7 @@ GOOGLE_AI_STUDIO_EXTRA_MODELS = [
         "name": "Gemma 4 26B A4B Instruct",
         "context_length": 32768,
         "supports_vision": False,
-        "supports_tools": False,
+        "supports_tools": True,
         "input_modalities": ["text"],
         "pricing": {},
     },
@@ -46,7 +46,7 @@ GOOGLE_AI_STUDIO_EXTRA_MODELS = [
         "name": "Gemma 4 31B Instruct",
         "context_length": 32768,
         "supports_vision": False,
-        "supports_tools": False,
+        "supports_tools": True,
         "input_modalities": ["text"],
         "pricing": {},
     },
@@ -311,6 +311,7 @@ def _agentic_loop(cid, model_id, system_prompt, history, user_text, image_path, 
         tool_calls_map = {}
         finish_reason = None
         usage = None
+        google_thought_active = False
 
         for chunk in stream:
             choice = chunk.choices[0] if chunk.choices else None
@@ -323,9 +324,35 @@ def _agentic_loop(cid, model_id, system_prompt, history, user_text, image_path, 
             finish_reason = choice.finish_reason or finish_reason
             delta = choice.delta
 
+            # OpenRouter reasoning field (DeepSeek R1, etc.)
+            reasoning_text = getattr(delta, "reasoning", None)
+            if reasoning_text:
+                yield _sse({"type": "reasoning_delta", "delta": reasoning_text})
+
             if delta.content:
-                content_parts.append(delta.content)
-                yield _sse({"type": "content_delta", "delta": delta.content})
+                if is_google:
+                    # Detect Google AI Studio thinking chunks via extra_content flag
+                    raw_delta = chunk.model_dump().get("choices", [{}])[0].get("delta", {})
+                    is_thought = raw_delta.get("extra_content", {}).get("google", {}).get("thought", False)
+                    content = delta.content
+                    if is_thought:
+                        if not google_thought_active:
+                            google_thought_active = True
+                            if content.startswith("<thought>"):
+                                content = content[len("<thought>"):]
+                        if content:
+                            yield _sse({"type": "reasoning_delta", "delta": content})
+                    else:
+                        if google_thought_active:
+                            google_thought_active = False
+                            if content.startswith("</thought>"):
+                                content = content[len("</thought>"):]
+                        if content:
+                            content_parts.append(content)
+                            yield _sse({"type": "content_delta", "delta": content})
+                else:
+                    content_parts.append(delta.content)
+                    yield _sse({"type": "content_delta", "delta": delta.content})
 
             if delta.tool_calls:
                 for tc in delta.tool_calls:
