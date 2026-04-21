@@ -303,7 +303,8 @@ def _agentic_loop(cid, model_id, system_prompt, history, user_text, image_path, 
             create_kwargs["extra_body"] = reasoning_body
         if use_tools:
             create_kwargs["tools"] = TOOLS
-            create_kwargs["tool_choice"] = "auto"
+            if not is_google:
+                create_kwargs["tool_choice"] = "auto"
 
         stream = active_client.chat.completions.create(**create_kwargs)
 
@@ -356,10 +357,11 @@ def _agentic_loop(cid, model_id, system_prompt, history, user_text, image_path, 
 
             if delta.tool_calls:
                 for tc in delta.tool_calls:
-                    idx = tc.index
+                    # Google AI Studio sends null index; assign sequential keys
+                    idx = tc.index if tc.index is not None else len(tool_calls_map)
                     if idx not in tool_calls_map:
                         tool_calls_map[idx] = {
-                            "id": tc.id or "",
+                            "id": tc.id or f"call_{new_id()}",
                             "type": "function",
                             "function": {"name": "", "arguments": ""},
                         }
@@ -373,11 +375,13 @@ def _agentic_loop(cid, model_id, system_prompt, history, user_text, image_path, 
         assistant_content = "".join(content_parts) or None
         tool_calls_list = [tool_calls_map[i] for i in sorted(tool_calls_map)]
 
-        if finish_reason == "tool_calls" and tool_calls_list:
+        if tool_calls_list:
             tool_calls_json = json.dumps(tool_calls_list)
+            # Gemma 4 requires explicit empty string content (not null) alongside tool calls
+            msg_content = assistant_content if assistant_content is not None else ""
             messages.append({
                 "role": "assistant",
-                "content": assistant_content,
+                "content": msg_content,
                 "tool_calls": tool_calls_list,
             })
             new_messages.append({
