@@ -217,6 +217,13 @@ def api_search():
 
 TOOLS = [WEB_SEARCH_SCHEMA, WEB_FETCH_SCHEMA, RUN_PYTHON_SCHEMA]
 
+TOOL_USE_SYSTEM_PROMPT = (
+    "You have access to callable tools: web_search, web_fetch, and run_python. "
+    "When the user asks to use a tool, issue a tool call instead of describing a plan. "
+    "If a tool result is needed, call the tool first and then answer using that result. "
+    "Do not ask for confirmation unless required parameters are missing."
+)
+
 def _model_supports_tools(model_id: str) -> bool:
     models = _models_cache.get("data") or []
     m = next((x for x in models if x["id"] == model_id), None)
@@ -224,10 +231,31 @@ def _model_supports_tools(model_id: str) -> bool:
         return True  # assume support if unknown
     return m.get("supports_tools", True)
 
-def _build_openrouter_messages(system_prompt, history, user_text, image_path):
-    msgs = []
+def _compose_system_prompt(system_prompt, use_tools: bool):
+    parts = []
     if system_prompt:
-        msgs.append({"role": "system", "content": system_prompt})
+        parts.append(system_prompt.strip())
+    if use_tools:
+        parts.append(TOOL_USE_SYSTEM_PROMPT)
+    if not parts:
+        return None
+    return "\n\n".join(parts)
+
+def _requested_tool_name(user_text: str):
+    text = (user_text or "").lower()
+    if "web_search" in text or "web search" in text or "search the web" in text:
+        return "web_search"
+    if "web_fetch" in text or "web fetch" in text or "fetch this url" in text or "fetch url" in text:
+        return "web_fetch"
+    if "run_python" in text or "run python" in text or "python tool" in text:
+        return "run_python"
+    return None
+
+def _build_openrouter_messages(system_prompt, history, user_text, image_path, use_tools):
+    msgs = []
+    final_system_prompt = _compose_system_prompt(system_prompt, use_tools)
+    if final_system_prompt:
+        msgs.append({"role": "system", "content": final_system_prompt})
 
     for m in history:
         if m["role"] == "tool":
@@ -278,7 +306,9 @@ def _sse(data: dict) -> str:
     return f"data: {json.dumps(data)}\n\n"
 
 def _agentic_loop(cid, model_id, system_prompt, history, user_text, image_path, incognito, reasoning_enabled=False):
-    messages = _build_openrouter_messages(system_prompt, history, user_text, image_path)
+    use_tools = _model_supports_tools(model_id)
+    force_tool_name = _requested_tool_name(user_text) if use_tools else None
+    messages = _build_openrouter_messages(system_prompt, history, user_text, image_path, use_tools)
 
     new_messages = []
     user_image_path = image_path
@@ -289,7 +319,6 @@ def _agentic_loop(cid, model_id, system_prompt, history, user_text, image_path, 
     active_client = google_client if is_google and google_client else client
 
     reasoning_body = {"reasoning": {"effort": "medium"}} if reasoning_enabled else {"reasoning": {"exclude": True}}
-    use_tools = _model_supports_tools(model_id)
     if not use_tools:
         yield _sse({"type": "tools_warning", "message": f"Model {model_id} does not support tools — web search, web fetch and code execution are disabled for this conversation."})
 
@@ -303,12 +332,31 @@ def _agentic_loop(cid, model_id, system_prompt, history, user_text, image_path, 
             create_kwargs["extra_body"] = reasoning_body
         if use_tools:
             create_kwargs["tools"] = TOOLS
-            if not is_google:
+            if force_tool_name:
+                create_kwargs["tool_choice"] = {
+                    "type": "function",
+                    "function": {"name": force_tool_name},
+                }
+            else:
                 create_kwargs["tool_choice"] = "auto"
 
-        stream = active_client.chat.completions.create(**create_kwargs)
+        try:
+            stream = active_client.chat.completions.create(**create_kwargs)
+        except Exception as e:
+            # Some providers reject specific tool_choice forms; degrade gracefully.
+            if use_tools and "tool_choice" in create_kwargs and "tool_choice" in str(e).lower():
+                fallback_kwargs = dict(create_kwargs)
+                fallback_kwargs["tool_choice"] = "auto"
+                try:
+                    stream = active_client.chat.completions.create(**fallback_kwargs)
+                except Exception:
+                    fallback_kwargs.pop("tool_choice", None)
+                    stream = active_client.chat.completions.create(**fallback_kwargs)
+            else:
+                raise
 
         content_parts = []
+        reasoning_parts = []
         tool_calls_map = {}
         finish_reason = None
         usage = None
@@ -328,6 +376,7 @@ def _agentic_loop(cid, model_id, system_prompt, history, user_text, image_path, 
             # OpenRouter reasoning field (DeepSeek R1, etc.)
             reasoning_text = getattr(delta, "reasoning", None)
             if reasoning_text:
+                reasoning_parts.append(reasoning_text)
                 yield _sse({"type": "reasoning_delta", "delta": reasoning_text})
 
             if delta.content:
@@ -342,6 +391,7 @@ def _agentic_loop(cid, model_id, system_prompt, history, user_text, image_path, 
                             if content.startswith("<thought>"):
                                 content = content[len("<thought>"):]
                         if content:
+                            reasoning_parts.append(content)
                             yield _sse({"type": "reasoning_delta", "delta": content})
                     else:
                         if google_thought_active:
@@ -373,9 +423,11 @@ def _agentic_loop(cid, model_id, system_prompt, history, user_text, image_path, 
                         tool_calls_map[idx]["function"]["arguments"] += tc.function.arguments
 
         assistant_content = "".join(content_parts) or None
+        assistant_reasoning = "".join(reasoning_parts) or None
         tool_calls_list = [tool_calls_map[i] for i in sorted(tool_calls_map)]
 
         if tool_calls_list:
+            force_tool_name = None
             tool_calls_json = json.dumps(tool_calls_list)
             # Gemma 4 requires explicit empty string content (not null) alongside tool calls
             msg_content = assistant_content if assistant_content is not None else ""
@@ -387,6 +439,7 @@ def _agentic_loop(cid, model_id, system_prompt, history, user_text, image_path, 
             new_messages.append({
                 "role": "assistant",
                 "content": assistant_content,
+                "reasoning": assistant_reasoning,
                 "tool_calls": tool_calls_json,
             })
 
@@ -432,6 +485,7 @@ def _agentic_loop(cid, model_id, system_prompt, history, user_text, image_path, 
             new_messages.append({
                 "role": "assistant",
                 "content": assistant_content,
+                "reasoning": assistant_reasoning,
             })
 
             if usage:
@@ -454,6 +508,7 @@ def _agentic_loop(cid, model_id, system_prompt, history, user_text, image_path, 
                 cid,
                 role=m["role"],
                 content=m.get("content"),
+                reasoning=m.get("reasoning"),
                 tool_calls=m.get("tool_calls"),
                 tool_call_id=m.get("tool_call_id"),
             )

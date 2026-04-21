@@ -21,16 +21,46 @@ export function renderHistory(messages) {
   messagesContainer.innerHTML = "";
   _latestAssistantEl = null;
   let lastAssistantEl = null;
+
+  // tool_call_id -> {name, args} so tool result messages can find their call
+  const pendingToolCalls = {};
+
   for (const m of messages) {
     if (m.role === "user") {
       appendUserMessage(m.content, m.image_path ? `/uploads/${m.image_path.split("/").pop()}` : null, true);
+
     } else if (m.role === "assistant") {
-      const el = appendAssistantMessage(null, true);
-      finalizeAssistantMessage(el, m.content || "");
-      lastAssistantEl = el;
+      const hasContent = m.content && m.content.trim();
+      const hasReasoning = m.reasoning && m.reasoning.trim();
+
+      // Skip rendering an empty placeholder when this message only issued tool calls
+      if (hasContent || hasReasoning || !m.tool_calls) {
+        const el = appendAssistantMessage(null, true);
+        if (hasReasoning) appendReasoningDelta(el, m.reasoning);
+        finalizeAssistantMessage(el, m.content || "");
+        lastAssistantEl = el;
+      }
+
+      // Register each tool call so the matching tool result can look it up
+      if (m.tool_calls) {
+        try {
+          for (const tc of JSON.parse(m.tool_calls)) {
+            let args = {};
+            try { args = JSON.parse(tc.function.arguments || "{}"); } catch {}
+            pendingToolCalls[tc.id] = { name: tc.function.name, args };
+          }
+        } catch {}
+      }
+
+    } else if (m.role === "tool") {
+      const tc = pendingToolCalls[m.tool_call_id];
+      if (tc) {
+        appendToolBlock(tc.name, tc.args, m.content, null);
+        delete pendingToolCalls[m.tool_call_id];
+      }
     }
   }
-  // Mark only the last assistant message as latest
+
   if (lastAssistantEl) markLatest(lastAssistantEl);
   showEmpty(messages.length === 0);
   scrollToBottom();
@@ -122,6 +152,7 @@ export function appendAssistantMessage(userText = null, showActions = true) {
   const wrap = document.createElement("div");
   wrap.className = "message assistant";
   if (userText !== null) wrap.dataset.userText = userText;
+  wrap._finalized = false;
 
   const meta = document.createElement("div");
   meta.className = "message-meta";
@@ -188,14 +219,52 @@ export function appendStreamDelta(msgEl, delta) {
     body.innerHTML = "";
     msgEl._streamText = "";
   }
+  msgEl._finalized = false;
   msgEl._streamText = (msgEl._streamText || "") + delta;
 
   if (msgEl._renderScheduled) return;
   msgEl._renderScheduled = true;
   requestAnimationFrame(() => {
     msgEl._renderScheduled = false;
+    if (msgEl._finalized) return;
     renderStreamingMarkdown(msgEl);
   });
+}
+
+function appendStreamingCursor(body) {
+  const cursor = document.createElement("span");
+  cursor.className = "stream-cursor";
+
+  const last = body.lastElementChild;
+  if (!last) {
+    body.appendChild(cursor);
+    return;
+  }
+
+  // Place cursor inline with the trailing rendered text whenever possible.
+  if (last.tagName === "P" || last.tagName === "LI") {
+    last.appendChild(cursor);
+    return;
+  }
+
+  if (last.tagName === "UL" || last.tagName === "OL") {
+    const lastItem = last.lastElementChild;
+    (lastItem || body).appendChild(cursor);
+    return;
+  }
+
+  if (last.tagName === "PRE") {
+    const code = last.querySelector("code:last-child");
+    (code || last).appendChild(cursor);
+    return;
+  }
+
+  if (last.tagName === "IMG" || last.tagName === "HR" || last.tagName === "TABLE") {
+    body.appendChild(cursor);
+    return;
+  }
+
+  last.appendChild(cursor);
 }
 
 function renderStreamingMarkdown(msgEl) {
@@ -209,13 +278,13 @@ function renderStreamingMarkdown(msgEl) {
   } else {
     body.textContent = text;
   }
-  const cursor = document.createElement("span");
-  cursor.className = "stream-cursor";
-  body.appendChild(cursor);
+  appendStreamingCursor(body);
   scrollToBottom();
 }
 
 export function finalizeAssistantMessage(msgEl, fullText) {
+  msgEl._finalized = true;
+  msgEl._streamText = fullText || "";
   const body = msgEl.querySelector(".message-body");
   body.innerHTML = "";
   if (typeof marked !== "undefined" && fullText) {

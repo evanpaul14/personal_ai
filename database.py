@@ -21,6 +21,7 @@ CREATE TABLE IF NOT EXISTS messages (
     conversation_id  TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
     role             TEXT NOT NULL CHECK(role IN ('user','assistant','tool')),
     content          TEXT,
+    reasoning        TEXT,
     tool_calls       TEXT,
     tool_call_id     TEXT,
     image_path       TEXT,
@@ -91,10 +92,16 @@ CREATE TRIGGER messages_au AFTER UPDATE OF content ON messages BEGIN
 END;
 """)
 
+def _migrate(db):
+    existing = {r["name"] for r in db.execute("PRAGMA table_info(messages)").fetchall()}
+    if "reasoning" not in existing:
+        db.execute("ALTER TABLE messages ADD COLUMN reasoning TEXT")
+
 def init_db():
     with get_db() as db:
         db.executescript(SCHEMA)
         _ensure_fts_schema(db)
+        _migrate(db)
         # Rebuild FTS index to cover any messages inserted before triggers existed
         try:
             db.execute("INSERT INTO messages_fts(messages_fts) VALUES('rebuild')")
@@ -172,14 +179,14 @@ def delete_conversation(cid):
 
 # --- Message helpers ---
 
-def add_message(conversation_id, role, content=None, tool_calls=None,
+def add_message(conversation_id, role, content=None, reasoning=None, tool_calls=None,
                 tool_call_id=None, image_path=None):
     mid = new_id()
     with get_db() as db:
         db.execute("""
-            INSERT INTO messages (id, conversation_id, role, content, tool_calls, tool_call_id, image_path)
-            VALUES (?,?,?,?,?,?,?)
-        """, (mid, conversation_id, role, content, tool_calls, tool_call_id, image_path))
+            INSERT INTO messages (id, conversation_id, role, content, reasoning, tool_calls, tool_call_id, image_path)
+            VALUES (?,?,?,?,?,?,?,?)
+        """, (mid, conversation_id, role, content, reasoning, tool_calls, tool_call_id, image_path))
     return mid
 
 def get_messages(conversation_id):
