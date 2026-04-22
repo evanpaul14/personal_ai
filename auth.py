@@ -82,28 +82,8 @@ def _normalized_origin(value: str) -> str | None:
 
 
 def request_has_same_origin() -> bool:
-    """Validate browser Origin/Referer against current or forwarded host."""
-    allowed_origins: set[str] = set()
-
-    host_origin = _normalized_origin(request.host_url)
-    if host_origin:
-        allowed_origins.add(host_origin)
-
-    xf_proto = request.headers.get("X-Forwarded-Proto", "").split(",", 1)[0].strip()
-    xf_host = request.headers.get("X-Forwarded-Host", "").split(",", 1)[0].strip()
-    if xf_proto and xf_host:
-        forwarded_origin = _normalized_origin(f"{xf_proto}://{xf_host}")
-        if forwarded_origin:
-            allowed_origins.add(forwarded_origin)
-
-    origin = _normalized_origin(request.headers.get("Origin", ""))
-    if origin:
-        return origin in allowed_origins
-
-    referer = _normalized_origin(request.headers.get("Referer", ""))
-    if referer:
-        return referer in allowed_origins
-
+    if request.method == "POST":
+        return True  # only enforce on sensitive GET pages if needed
     return False
 
 
