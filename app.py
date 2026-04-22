@@ -390,9 +390,9 @@ def api_post_message(cid):
                 incognito=incognito,
                 reasoning_enabled=reasoning_enabled,
             )
-        except Exception:
+        except Exception as e:
             app.logger.exception("Message pipeline failed")
-            yield f"data: {json.dumps({'type':'error','message':'internal server error'})}\n\n"
+            yield f"data: {json.dumps({'type':'error','message':_friendly_error(e)})}\n\n"
 
     return Response(
         stream_with_context(generate()),
@@ -417,6 +417,20 @@ def api_search():
     except Exception:
         app.logger.exception("Search failed")
         return jsonify({"error": "search unavailable"}), 500
+
+# --- Helpers ---
+
+def _friendly_error(exc: Exception) -> str:
+    """Return a human-readable error message, preferring the provider's 'raw' field."""
+    body = getattr(exc, "body", None)
+    if isinstance(body, dict):
+        raw = body.get("error", {}).get("metadata", {}).get("raw")
+        if raw:
+            return str(raw)
+        msg = body.get("error", {}).get("message")
+        if msg:
+            return str(msg)
+    return str(exc)
 
 # --- Agentic loop ---
 
@@ -446,13 +460,14 @@ def _model_supports_tools(model_id: str) -> bool:
     return m.get("supports_tools", True)
 
 def _compose_system_prompt(system_prompt, use_tools: bool):
-    parts = []
+    from datetime import datetime
+    now = datetime.now()
+    date_line = f"Current date and time: {now.strftime('%A, %B %-d, %Y, %-I:%M %p')}"
+    parts = [date_line]
     if system_prompt:
         parts.append(system_prompt.strip())
     if use_tools:
         parts.append(_tool_use_system_prompt())
-    if not parts:
-        return None
     return "\n\n".join(parts)
 
 def _requested_tool_name(user_text: str):

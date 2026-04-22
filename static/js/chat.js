@@ -11,10 +11,21 @@ const messageInput = document.getElementById("message-input");
 let _streaming = false;
 let _pendingImageFile = null;
 let _latestAssistantEl = null;
+let _userScrolled = false;
+let _programmaticScroll = false;
+let _abortController = null;
 
 export function setPendingImage(file) { _pendingImageFile = file; }
 export function clearPendingImage() { _pendingImageFile = null; }
 export function isStreaming() { return _streaming; }
+export function stopStreaming() { _abortController?.abort(); }
+
+// Detect user-initiated scrolls — pause auto-scroll until they return to bottom
+viewport.addEventListener("scroll", () => {
+  if (_programmaticScroll) return;
+  const distFromBottom = viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight;
+  _userScrolled = distFromBottom > 80;
+}, { passive: true });
 
 // Render full conversation history from DB
 export function renderHistory(messages) {
@@ -60,7 +71,8 @@ export function renderHistory(messages) {
 
   if (lastAssistantEl) markLatest(lastAssistantEl);
   showEmpty(messages.length === 0);
-  scrollToBottom();
+  _userScrolled = false;
+  scrollToBottom(false, true);
 }
 
 export function clearMessages() {
@@ -72,8 +84,11 @@ function showEmpty(show) {
   emptyState.classList.toggle("hidden", !show);
 }
 
-function scrollToBottom(smooth = false) {
+function scrollToBottom(smooth = false, force = false) {
+  if (!force && _userScrolled) return;
+  _programmaticScroll = true;
   viewport.scrollTo({ top: viewport.scrollHeight, behavior: smooth ? "smooth" : "instant" });
+  requestAnimationFrame(() => { _programmaticScroll = false; });
 }
 
 function timestamp() {
@@ -156,7 +171,8 @@ export function appendUserMessage(text, imageUrl = null, showActions = true) {
   if (showActions) addActions(el);
 
   messagesContainer.appendChild(el);
-  scrollToBottom(true);
+  _userScrolled = false;
+  scrollToBottom(true, true);
   return el;
 }
 
@@ -241,21 +257,37 @@ function appendStreamingCursor(body) {
   last.appendChild(cursor);
 }
 
+// Shared marked + DOMPurify config
+if (typeof marked !== "undefined") marked.setOptions({ breaks: true, gfm: true });
+const _purifyConfig = {
+  FORBID_TAGS: ["style", "script", "svg", "math"],
+  FORBID_ATTR: ["style", "onerror", "onload", "onclick", "onmouseover"],
+};
+
+function _renderMarkdown(text) {
+  if (!text) return "";
+  if (typeof marked === "undefined" || typeof DOMPurify === "undefined") {
+    return `<p>${text.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;")}</p>`;
+  }
+  const raw = marked.parse(text);
+  return DOMPurify.sanitize(raw, _purifyConfig);
+}
+
+function _fixLinks(body) {
+  body.querySelectorAll("a").forEach(a => {
+    if (!a.href || a.protocol === "javascript:") { a.removeAttribute("href"); return; }
+    a.target = "_blank";
+    a.rel = "noopener noreferrer";
+  });
+}
+
 function renderStreamingMarkdown(msgEl) {
   const body = msgEl.querySelector(".msg-body");
   if (!body) return;
-  const text = msgEl._streamText || "";
-  // Strip action buttons before re-rendering
   const actions = body.querySelector(".msg-actions");
 
-  body.innerHTML = "";
-  if (text) {
-    const p = document.createElement("p");
-    p.className = "msg-plain-text";
-    p.textContent = text;
-    body.appendChild(p);
-  }
-
+  body.innerHTML = _renderMarkdown(msgEl._streamText);
+  _fixLinks(body);
   appendStreamingCursor(body);
   if (actions) body.appendChild(actions);
   scrollToBottom();
@@ -266,15 +298,9 @@ export function finalizeAssistantMessage(msgEl, fullText) {
   msgEl._streamText = fullText || "";
   const body = msgEl.querySelector(".msg-body");
   const actions = body.querySelector(".msg-actions");
-  body.innerHTML = "";
 
-  if (fullText) {
-    const p = document.createElement("p");
-    p.className = "msg-plain-text";
-    p.textContent = fullText;
-    body.appendChild(p);
-  }
-
+  body.innerHTML = _renderMarkdown(fullText);
+  _fixLinks(body);
   if (actions) body.appendChild(actions);
   markLatest(msgEl);
 }
@@ -327,7 +353,8 @@ export async function executeSend(cid, text, imageFile, incognito, systemPrompt)
   if (!text && !imageFile) return;
 
   _streaming = true;
-  sendBtn.disabled = true;
+  _abortController = new AbortController();
+  sendBtn.classList.add("stop");
 
   const modelId = getCurrentModelId();
   const reasoning = getReasoningEnabled();
@@ -338,7 +365,7 @@ export async function executeSend(cid, text, imageFile, incognito, systemPrompt)
   let pendingImageData = null;
 
   try {
-    const stream = sendMessage(cid, text, imageFile, incognito, modelId, systemPrompt, reasoning);
+    const stream = sendMessage(cid, text, imageFile, incognito, modelId, systemPrompt, reasoning, _abortController.signal);
     for await (const event of stream) {
       if (event.type === "reasoning_delta") {
         appendReasoningDelta(currentAssistantEl, event.delta);
@@ -372,11 +399,18 @@ export async function executeSend(cid, text, imageFile, incognito, systemPrompt)
       }
     }
   } catch (err) {
-    if (currentAssistantEl) currentAssistantEl.remove();
-    appendErrorMessage(err.message);
+    if (err.name === "AbortError") {
+      // User stopped — keep whatever was generated so far
+      if (currentAssistantEl) finalizeAssistantMessage(currentAssistantEl, fullContent);
+    } else {
+      if (currentAssistantEl) currentAssistantEl.remove();
+      appendErrorMessage(err.message);
+    }
   } finally {
     _streaming = false;
-    sendBtn.disabled = false;
+    _abortController = null;
+    _userScrolled = false;
+    sendBtn.classList.remove("stop");
     messageInput.focus();
   }
 }

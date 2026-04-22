@@ -667,6 +667,8 @@ body.phos-amber { --green: #ffb454; --cyan: #ffca7a; --magenta: #ff7ac6; --purpl
 }
 
 .msg-gutter {
+  grid-column: 1;
+  grid-row: 1;
   text-align: right;
   font-size: 12px;
   color: var(--text-dim);
@@ -674,6 +676,11 @@ body.phos-amber { --green: #ffb454; --cyan: #ffca7a; --magenta: #ff7ac6; --purpl
   white-space: nowrap;
   font-variant-numeric: tabular-nums;
   user-select: none;
+}
+
+/* Reasoning block is a direct .msg child — keep it in col 2 so .msg-body doesn't wrap to col 1 */
+.msg > .reasoning {
+  grid-column: 2;
 }
 .msg-nick { font-weight: 700; letter-spacing: 0.02em; }
 .msg-nick .lt, .msg-nick .gt { color: var(--text-dim); font-weight: 400; }
@@ -685,6 +692,7 @@ body.phos-amber { --green: #ffb454; --cyan: #ffca7a; --magenta: #ff7ac6; --purpl
 .msg.err  .msg-nick .name { color: var(--red); }
 
 .msg-body {
+  grid-column: 2;
   min-width: 0;
   font-size: 13px;
   line-height: 1.65;
@@ -981,6 +989,9 @@ body.phos-amber { --green: #ffb454; --cyan: #ffca7a; --magenta: #ff7ac6; --purpl
 #send-btn:disabled, .btn-send:disabled { opacity: 0.4; cursor: not-allowed; box-shadow: none; }
 #send-btn svg { display: none; }
 #send-btn::after { content: "SEND ▸"; }
+#send-btn.stop { background: transparent; border-color: var(--red); color: var(--red); box-shadow: none; }
+#send-btn.stop:hover { background: rgba(255,107,107,0.1); box-shadow: 0 0 6px rgba(255,107,107,0.4); }
+#send-btn.stop::after { content: "■ stop"; }
 
 /* =========================================================================
    TWEAKS PANEL
@@ -988,7 +999,7 @@ body.phos-amber { --green: #ffb454; --cyan: #ffca7a; --magenta: #ff7ac6; --purpl
 
 #tweaks {
   position: fixed;
-  bottom: 68px; right: 20px;
+  bottom: calc(74px + env(safe-area-inset-bottom)); right: 20px;
   width: 280px;
   background: var(--bg-deep);
   border: 1px solid var(--amber);
@@ -1067,7 +1078,7 @@ body.phos-amber { --green: #ffb454; --cyan: #ffca7a; --magenta: #ff7ac6; --purpl
 }
 
 #tweaks-fab {
-  position: fixed; bottom: 20px; right: 20px;
+  position: fixed; bottom: calc(74px + env(safe-area-inset-bottom)); right: 20px;
   width: 38px; height: 38px;
   border: 1px solid var(--amber); background: var(--bg-deep);
   color: var(--amber); font-family: var(--font-mono); font-size: 14px;
@@ -1186,8 +1197,8 @@ body.phos-amber { --green: #ffb454; --cyan: #ffca7a; --magenta: #ff7ac6; --purpl
   .msg-gutter { font-size: 11px; }
   #messages-container { padding: 0 12px; }
   .input-prompt { font-size: 12px; }
-  #tweaks { left: 12px; right: 12px; width: auto; bottom: 68px; }
-  #tweaks-fab { bottom: 20px; }
+  #tweaks { left: 12px; right: 12px; width: auto; bottom: calc(74px + env(safe-area-inset-bottom)); }
+  #tweaks-fab { bottom: calc(74px + env(safe-area-inset-bottom)); right: 12px; }
   .model-dropdown-panel {
     position: fixed;
     top: calc(var(--topbar-h) + 4px + env(safe-area-inset-top));

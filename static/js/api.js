@@ -109,7 +109,7 @@ export async function searchChats(query, limit = 20) {
  * @param {string} modelId - only used for incognito
  * @param {string|null} systemPrompt - only used for incognito
  */
-export async function* sendMessage(cid, text, imageFile, incognito, modelId, systemPrompt, reasoning) {
+export async function* sendMessage(cid, text, imageFile, incognito, modelId, systemPrompt, reasoning, signal) {
   const form = new FormData();
   form.append("message", text);
   form.append("incognito", incognito ? "true" : "false");
@@ -128,6 +128,7 @@ export async function* sendMessage(cid, text, imageFile, incognito, modelId, sys
     headers,
     body: form,
     credentials: "same-origin",
+    signal,
   });
 
   if (res.status === 403) {
@@ -138,6 +139,7 @@ export async function* sendMessage(cid, text, imageFile, incognito, modelId, sys
       headers: retryHeaders,
       body: form,
       credentials: "same-origin",
+      signal,
     });
   }
 

@@ -63,10 +63,16 @@ export function initTweaks() {
     STATE.flicker = e.target.checked; applyTweaks(); save();
   });
 
-  document.getElementById("tweaks-fab")?.addEventListener("click", () => {
-    document.getElementById("tweaks")?.classList.add("open");
-  });
-  document.getElementById("tweaks-close")?.addEventListener("click", () => {
-    document.getElementById("tweaks")?.classList.remove("open");
+  const tweaks = document.getElementById("tweaks");
+  const fab = document.getElementById("tweaks-fab");
+
+  fab?.addEventListener("click", () => tweaks?.classList.add("open"));
+  document.getElementById("tweaks-close")?.addEventListener("click", () => tweaks?.classList.remove("open"));
+
+  document.addEventListener("mousedown", (e) => {
+    if (!tweaks?.classList.contains("open")) return;
+    if (!tweaks.contains(e.target) && e.target !== fab) {
+      tweaks.classList.remove("open");
+    }
   });
 }

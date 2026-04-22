@@ -1,6 +1,6 @@
 import { initModels, getCurrentModelId, currentModelSupportsVision, currentModelSupportsTools } from "./models.js";
 import {
-  renderHistory, clearMessages, sendCurrentMessage, executeSend, isStreaming, appendUserMessage
+  renderHistory, clearMessages, sendCurrentMessage, executeSend, isStreaming, stopStreaming, appendUserMessage
 } from "./chat.js";
 import { initTweaks } from "./tweaks.js";
 import {
@@ -9,7 +9,7 @@ import {
 } from "./history.js";
 import { setCurrentCid, setOnSave, setSystemPromptValue, getSystemPromptValue } from "./settings.js";
 import { initUpload, setVisionEnabled } from "./upload.js";
-import { createConversation, fetchMessages, initCsrfToken, searchChats } from "./api.js";
+import { createConversation, fetchMessages, initCsrfToken, searchChats, deleteConversation } from "./api.js";
 
 // --- State ---
 let currentCid = null;
@@ -50,13 +50,26 @@ function closeSidebarIfMobile() {
   if (window.innerWidth < 640) closeSidebar();
 }
 
+// --- Auto-delete empty conversation when navigating away ---
+async function maybeDeleteEmptyConversation() {
+  if (!currentCid || incognito) return;
+  const container = document.getElementById("messages-container");
+  if (container.children.length > 0) return;
+  const cid = currentCid;
+  try {
+    await deleteConversation(cid);
+    await refreshConversations();
+  } catch {}
+}
+
 // --- New chat ---
-newChatBtn.addEventListener("click", () => {
-  startNewChat();
+newChatBtn.addEventListener("click", async () => {
+  await startNewChat();
   closeSidebarIfMobile();
 });
 
-function startNewChat() {
+async function startNewChat() {
+  await maybeDeleteEmptyConversation();
   currentCid = null;
   clearMessages();
   setActiveCid(null);
@@ -67,6 +80,7 @@ function startNewChat() {
 
 // --- Load conversation ---
 async function loadConversation(conv) {
+  await maybeDeleteEmptyConversation();
   currentCid = conv.id;
   setActiveCid(conv.id);
   setCurrentCid(conv.id);
@@ -122,7 +136,10 @@ async function handleSend() {
   await sendCurrentMessage(currentCid, incognito, systemPrompt);
 }
 
-sendBtn.addEventListener("click", handleSend);
+sendBtn.addEventListener("click", () => {
+  if (isStreaming()) stopStreaming();
+  else handleSend();
+});
 messageInput.addEventListener("keydown", (e) => {
   if (e.key === "Enter" && !e.shiftKey) {
     e.preventDefault();
@@ -137,9 +154,8 @@ document.addEventListener("keydown", (e) => {
     const tag = document.activeElement?.tagName;
     if (tag === "TEXTAREA" || tag === "INPUT") return;
     e.preventDefault();
-    startNewChat();
+    startNewChat().then(() => messageInput.focus());
     closeSidebarIfMobile();
-    messageInput.focus();
   }
 });
 
