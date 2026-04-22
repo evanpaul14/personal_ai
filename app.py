@@ -5,6 +5,7 @@ import threading
 from flask import Flask, request, jsonify, Response, stream_with_context, send_from_directory, \
     render_template, redirect, url_for, session
 from werkzeug.exceptions import RequestEntityTooLarge
+from werkzeug.middleware.proxy_fix import ProxyFix
 from openai import OpenAI
 from PIL import Image, UnidentifiedImageError
 
@@ -24,6 +25,8 @@ from tools.web_fetch import web_fetch, WEB_FETCH_SCHEMA
 from tools.python_sandbox import run_python, RUN_PYTHON_SCHEMA
 
 app = Flask(__name__, static_folder="static", template_folder="templates")
+if config.TRUST_X_FORWARDED_FOR:
+    app.wsgi_app = ProxyFix(app.wsgi_app, x_proto=1, x_host=1, x_for=1)
 app.secret_key = config.SECRET_KEY
 app.config["SESSION_COOKIE_HTTPONLY"] = config.SESSION_COOKIE_HTTPONLY
 app.config["SESSION_COOKIE_SAMESITE"] = config.SESSION_COOKIE_SAMESITE
