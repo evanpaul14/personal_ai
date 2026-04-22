@@ -97,6 +97,8 @@ def _save_uploaded_image(image_file):
 def require_auth():
     if request.endpoint in _PUBLIC_ENDPOINTS:
         return
+    if request.path.endswith((".css", ".js")):
+        return
     if not session.get("authed"):
         if request.path.startswith("/api/"):
             return jsonify({"error": "authentication required"}), 401
