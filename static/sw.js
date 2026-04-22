@@ -1,6 +1,5 @@
 const CACHE_NAME = "pai-v1";
 const STATIC_ASSETS = [
-  "/",
   "/static/css/main.css",
   "/static/js/app.js",
   "/static/js/api.js",
@@ -32,6 +31,12 @@ self.addEventListener("activate", (e) => {
 
 self.addEventListener("fetch", (e) => {
   const url = new URL(e.request.url);
+
+  // HTML navigations should always hit network for current auth/session state.
+  if (e.request.mode === "navigate") {
+    e.respondWith(fetch(e.request));
+    return;
+  }
 
   // SSE streams — always network, never cache
   if (url.pathname.endsWith("/messages") && e.request.method === "POST") {

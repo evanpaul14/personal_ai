@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0" />
+  <meta name="theme-color" content="#17171f" />
+  <title>personal_ai // auth</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=VT323&family=IBM+Plex+Mono:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/static/css/main.css" />
+</head>
+<body class="crt-medium phos-retro">
+
+<div class="crt-scanlines" aria-hidden="true"></div>
+<div class="crt-rollbar crt-flicker" aria-hidden="true"></div>
+<div class="crt-vignette" aria-hidden="true"></div>
+
+<div class="login-shell">
+  <div class="login-box" role="main">
+
+    <div class="sidebar-header login-brand-divider">
+      <div class="logo-row">
+        <span class="logo-bracket">[</span>
+        <span class="logo-name">personal_ai</span>
+        <span class="logo-bracket">]</span>
+        <span class="logo-cursor" aria-hidden="true"></span>
+      </div>
+      <div class="logo-sub">
+        {% if setup %}authentication setup{% else %}authentication required{% endif %}
+      </div>
+    </div>
+
+    {% if error %}
+    <div class="login-error" role="alert" aria-live="assertive">⚠ {{ error }}</div>
+    {% endif %}
+
+    {% if setup %}
+    <div class="login-hint">
+      First-run setup is local-only for security.<br />
+      Run <strong>python3 set_password.py</strong> on the server, then reload this page.
+    </div>
+    {% else %}
+    <form
+      method="POST"
+      action="/login"
+      class="login-form"
+      autocomplete="off"
+      novalidate
+    >
+      <input type="hidden" name="csrf_token" value="{{ csrf }}" />
+
+      <div class="login-field">
+        <label class="login-prompt" for="password-input">password:~$&nbsp;</label>
+        <input
+          type="password"
+          name="password"
+          id="password-input"
+          autocomplete="current-password"
+          autofocus
+          spellcheck="false"
+          required
+          aria-label="Password"
+        />
+      </div>
+
+      <button type="submit" class="login-submit">
+        authenticate ▸
+      </button>
+    </form>
+    {% endif %}
+
+  </div>
+</div>
+
+</body>
+</html>

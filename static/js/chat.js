@@ -22,7 +22,6 @@ export function renderHistory(messages) {
   _latestAssistantEl = null;
   let lastAssistantEl = null;
 
-  // tool_call_id -> {name, args} so tool result messages can find their call
   const pendingToolCalls = {};
 
   for (const m of messages) {
@@ -33,7 +32,6 @@ export function renderHistory(messages) {
       const hasContent = m.content && m.content.trim();
       const hasReasoning = m.reasoning && m.reasoning.trim();
 
-      // Skip rendering an empty placeholder when this message only issued tool calls
       if (hasContent || hasReasoning || !m.tool_calls) {
         const el = appendAssistantMessage(null, true);
         if (hasReasoning) appendReasoningDelta(el, m.reasoning);
@@ -41,7 +39,6 @@ export function renderHistory(messages) {
         lastAssistantEl = el;
       }
 
-      // Register each tool call so the matching tool result can look it up
       if (m.tool_calls) {
         try {
           for (const tc of JSON.parse(m.tool_calls)) {
@@ -83,136 +80,128 @@ function timestamp() {
   return new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 }
 
+function escHtml(str) {
+  return String(str).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");
+}
+
+function makeMsg(role, nick, ts) {
+  const el = document.createElement("div");
+  el.className = "msg " + role;
+  el.innerHTML = `
+    <div class="msg-gutter">
+      <div class="msg-nick"><span class="lt">&lt;</span><span class="name">${escHtml(nick)}</span><span class="gt">&gt;</span></div>
+      <span class="msg-ts">${escHtml(ts)}</span>
+    </div>
+    <div class="msg-body"></div>
+  `;
+  return el;
+}
+
 function makeCopyBtn(getTextFn) {
   const btn = document.createElement("button");
-  btn.className = "msg-action-btn copy-btn";
-  btn.title = "Copy";
-  btn.setAttribute("aria-label", "Copy message");
-  btn.innerHTML = `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>`;
+  btn.className = "msg-action copy";
+  btn.textContent = "⎘ copy";
   btn.addEventListener("click", async () => {
-    const text = getTextFn();
     try {
-      await navigator.clipboard.writeText(text);
-      btn.innerHTML = `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>`;
-      setTimeout(() => {
-        btn.innerHTML = `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>`;
-      }, 1500);
+      await navigator.clipboard.writeText(getTextFn());
+      btn.textContent = "✓ copied";
+      setTimeout(() => { btn.textContent = "⎘ copy"; }, 1200);
     } catch {}
   });
   return btn;
 }
 
-export function appendUserMessage(text, imageUrl = null, showActions = true) {
-  showEmpty(false);
-  const wrap = document.createElement("div");
-  wrap.className = "message user";
-  wrap.dataset.text = text || "";
-
-  const meta = document.createElement("div");
-  meta.className = "message-meta";
-  meta.textContent = `you · ${timestamp()}`;
-
-  if (showActions) {
-    const actions = document.createElement("div");
-    actions.className = "msg-actions";
-    actions.appendChild(makeCopyBtn(() => wrap.dataset.text));
-    meta.appendChild(actions);
+function addActions(el, opts = {}) {
+  const actions = document.createElement("div");
+  actions.className = "msg-actions";
+  actions.appendChild(makeCopyBtn(() => el.querySelector(".msg-body")?.innerText || ""));
+  if (opts.retry) {
+    const r = document.createElement("button");
+    r.className = "msg-action retry";
+    r.textContent = "↻ retry";
+    r.addEventListener("click", () => {
+      document.dispatchEvent(new CustomEvent("retryMessage", { detail: { text: opts.userText, msgEl: el } }));
+    });
+    actions.appendChild(r);
   }
-
-  const body = document.createElement("div");
-  body.className = "message-body";
-
-  if (imageUrl) {
-    const img = document.createElement("img");
-    img.src = imageUrl;
-    img.className = "message-image";
-    img.alt = "uploaded image";
-    body.appendChild(img);
-    if (text) { const p = document.createElement("p"); p.textContent = text; body.appendChild(p); }
-  } else {
-    body.textContent = text;
-  }
-
-  wrap.appendChild(meta);
-  wrap.appendChild(body);
-  messagesContainer.appendChild(wrap);
-  scrollToBottom(true);
-  return wrap;
+  el.querySelector(".msg-body").appendChild(actions);
 }
 
 function markLatest(el) {
-  // Remove latest from previous
-  messagesContainer.querySelectorAll(".message.latest").forEach(m => m.classList.remove("latest"));
+  messagesContainer.querySelectorAll(".msg.latest").forEach(m => m.classList.remove("latest"));
   if (el) el.classList.add("latest");
   _latestAssistantEl = el;
 }
 
-export function appendAssistantMessage(userText = null, showActions = true) {
+export function appendUserMessage(text, imageUrl = null, showActions = true) {
   showEmpty(false);
-  const wrap = document.createElement("div");
-  wrap.className = "message assistant";
-  if (userText !== null) wrap.dataset.userText = userText;
-  wrap._finalized = false;
+  const el = makeMsg("user", "you", timestamp());
+  el.dataset.text = text || "";
 
-  const meta = document.createElement("div");
-  meta.className = "message-meta";
-  meta.textContent = `ai · ${timestamp()}`;
+  const body = el.querySelector(".msg-body");
 
-  if (showActions) {
-    const actions = document.createElement("div");
-    actions.className = "msg-actions";
-    actions.appendChild(makeCopyBtn(() => {
-      const body = wrap.querySelector(".message-body");
-      return body ? body.innerText : "";
-    }));
-    if (userText !== null) {
-      const retryBtn = document.createElement("button");
-      retryBtn.className = "msg-action-btn retry-btn";
-      retryBtn.title = "Retry";
-      retryBtn.setAttribute("aria-label", "Retry response");
-      retryBtn.innerHTML = `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 .49-3.5"/></svg>`;
-      retryBtn.addEventListener("click", () => {
-        document.dispatchEvent(new CustomEvent("retryMessage", { detail: { text: userText, msgEl: wrap } }));
-      });
-      actions.appendChild(retryBtn);
-    }
-    meta.appendChild(actions);
+  if (imageUrl) {
+    const img = document.createElement("img");
+    img.src = imageUrl;
+    img.className = "msg-image";
+    img.alt = "uploaded image";
+    body.appendChild(img);
+    if (text) { const p = document.createElement("p"); p.textContent = text; body.appendChild(p); }
+  } else {
+    const p = document.createElement("p");
+    p.textContent = text;
+    body.appendChild(p);
   }
 
-  // Typing indicator shown until first content arrives
-  const body = document.createElement("div");
-  body.className = "message-body";
-  body.innerHTML = `<div class="typing-indicator"><span></span><span></span><span></span></div>`;
+  if (showActions) addActions(el);
 
-  wrap.appendChild(meta);
-  wrap.appendChild(body);
-  messagesContainer.appendChild(wrap);
-  markLatest(wrap);
+  messagesContainer.appendChild(el);
   scrollToBottom(true);
-  return wrap;
+  return el;
+}
+
+export function appendAssistantMessage(userText = null, showActions = true) {
+  showEmpty(false);
+  const el = makeMsg("ai", "ai", timestamp());
+  if (userText !== null) el.dataset.userText = userText;
+  el._finalized = false;
+
+  // Typing indicator until first content
+  el.querySelector(".msg-body").innerHTML = `<div class="typing-indicator"><span></span><span></span><span></span></div>`;
+
+  if (showActions) addActions(el, { retry: true, userText });
+
+  messagesContainer.appendChild(el);
+  markLatest(el);
+  scrollToBottom(true);
+  return el;
 }
 
 export function appendReasoningDelta(msgEl, delta) {
-  let block = msgEl.querySelector(".reasoning-block");
+  let block = msgEl.querySelector(".reasoning");
   if (!block) {
     block = document.createElement("details");
-    block.className = "reasoning-block";
+    block.className = "reasoning";
     block.innerHTML = `
-      <summary class="reasoning-summary">
-        <span class="reasoning-label">thinking</span>
-        <svg class="reasoning-chevron" width="10" height="6" viewBox="0 0 10 6" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M1 1l4 4 4-4"/></svg>
+      <summary>
+        <span class="tag">thinking</span>
+        <span class="note">expand</span>
+        <span class="chev">▸</span>
       </summary>
-      <div class="reasoning-content"></div>`;
-    const body = msgEl.querySelector(".message-body");
+      <div class="reasoning-body"></div>`;
+    const body = msgEl.querySelector(".msg-body");
     msgEl.insertBefore(block, body);
   }
-  const content = block.querySelector(".reasoning-content");
+  const content = block.querySelector(".reasoning-body");
   content.textContent = (content.textContent || "") + delta;
+  // Update note with line count
+  const note = block.querySelector(".note");
+  if (note) note.textContent = content.textContent.split("\n").length + " lines · expand";
   scrollToBottom();
 }
 
 export function appendStreamDelta(msgEl, delta) {
-  const body = msgEl.querySelector(".message-body");
+  const body = msgEl.querySelector(".msg-body");
   // Clear typing indicator on first delta
   const typing = body.querySelector(".typing-indicator");
   if (typing) {
@@ -233,112 +222,106 @@ export function appendStreamDelta(msgEl, delta) {
 
 function appendStreamingCursor(body) {
   const cursor = document.createElement("span");
-  cursor.className = "stream-cursor";
+  cursor.className = "tt-cursor";
 
   const last = body.lastElementChild;
-  if (!last) {
-    body.appendChild(cursor);
-    return;
-  }
-
-  // Place cursor inline with the trailing rendered text whenever possible.
-  if (last.tagName === "P" || last.tagName === "LI") {
-    last.appendChild(cursor);
-    return;
-  }
-
+  if (!last) { body.appendChild(cursor); return; }
+  if (last.tagName === "P" || last.tagName === "LI") { last.appendChild(cursor); return; }
   if (last.tagName === "UL" || last.tagName === "OL") {
     const lastItem = last.lastElementChild;
-    (lastItem || body).appendChild(cursor);
-    return;
+    (lastItem || body).appendChild(cursor); return;
   }
-
   if (last.tagName === "PRE") {
     const code = last.querySelector("code:last-child");
-    (code || last).appendChild(cursor);
-    return;
+    (code || last).appendChild(cursor); return;
   }
-
   if (last.tagName === "IMG" || last.tagName === "HR" || last.tagName === "TABLE") {
-    body.appendChild(cursor);
-    return;
+    body.appendChild(cursor); return;
   }
-
   last.appendChild(cursor);
 }
 
 function renderStreamingMarkdown(msgEl) {
-  const body = msgEl.querySelector(".message-body");
+  const body = msgEl.querySelector(".msg-body");
   if (!body) return;
   const text = msgEl._streamText || "";
-  if (typeof marked !== "undefined") {
-    marked.setOptions({ breaks: true, gfm: true });
-    body.innerHTML = marked.parse(text);
-    body.querySelectorAll("a").forEach(a => { a.target = "_blank"; a.rel = "noopener noreferrer"; });
-  } else {
-    body.textContent = text;
+  // Strip action buttons before re-rendering
+  const actions = body.querySelector(".msg-actions");
+
+  body.innerHTML = "";
+  if (text) {
+    const p = document.createElement("p");
+    p.className = "msg-plain-text";
+    p.textContent = text;
+    body.appendChild(p);
   }
+
   appendStreamingCursor(body);
+  if (actions) body.appendChild(actions);
   scrollToBottom();
 }
 
 export function finalizeAssistantMessage(msgEl, fullText) {
   msgEl._finalized = true;
   msgEl._streamText = fullText || "";
-  const body = msgEl.querySelector(".message-body");
+  const body = msgEl.querySelector(".msg-body");
+  const actions = body.querySelector(".msg-actions");
   body.innerHTML = "";
-  if (typeof marked !== "undefined" && fullText) {
-    marked.setOptions({ breaks: true, gfm: true });
-    body.innerHTML = marked.parse(fullText);
-    body.querySelectorAll("a").forEach(a => { a.target = "_blank"; a.rel = "noopener noreferrer"; });
-  } else {
-    body.textContent = fullText || "";
+
+  if (fullText) {
+    const p = document.createElement("p");
+    p.className = "msg-plain-text";
+    p.textContent = fullText;
+    body.appendChild(p);
   }
+
+  if (actions) body.appendChild(actions);
   markLatest(msgEl);
 }
 
 export function appendToolBlock(toolName, input, output, imageData) {
-  const block = document.createElement("div");
-  block.className = "tool-block";
   const inputStr = typeof input === "string" ? input : JSON.stringify(input, null, 2);
   let outputStr = typeof output === "string" ? output : JSON.stringify(output, null, 2);
   try { outputStr = JSON.stringify(JSON.parse(outputStr), null, 2); } catch {}
+
+  const argPreview = (input && input.query) ? `"${input.query}"` :
+                     (input && input.code) ? input.code.split("\n")[0].slice(0, 50) + (input.code.length > 50 ? "…" : "") :
+                     JSON.stringify(input || {}).slice(0, 60);
+
   const imageHtml = imageData
-    ? `<img src="data:image/png;base64,${imageData}" class="sandbox-image" alt="plot" />`
+    ? `<img src="data:image/png;base64,${imageData}" class="tool-image" alt="plot" />`
     : "";
-  block.innerHTML = `
-    <details>
-      <summary>
-        <span class="tool-label">⚡ tool</span>
-        <span class="tool-name">${escHtml(toolName)}</span>
-        <span class="tool-chevron">▾</span>
-      </summary>
-      <div class="tool-content">
-        <div class="tool-content-label">input</div>
-        <pre>${escHtml(inputStr)}</pre>
-        <div class="tool-content-label" style="margin-top:8px">output</div>
-        <pre>${escHtml(outputStr)}</pre>
-        ${imageHtml}
-      </div>
-    </details>`;
-  messagesContainer.appendChild(block);
+
+  const d = document.createElement("details");
+  d.className = "tool";
+  d.innerHTML = `
+    <summary>
+      <span class="tag">TOOL</span>
+      <span class="name">${escHtml(toolName)}</span>
+      <span class="arg-preview">${escHtml(argPreview)}</span>
+      <span class="status ok">● ok</span>
+    </summary>
+    <div class="tool-body">
+      <div class="tool-label">input</div>
+      <pre class="tool-pre">${escHtml(inputStr)}</pre>
+      <div class="tool-label">output</div>
+      <pre class="tool-pre">${escHtml(outputStr)}</pre>
+      ${imageHtml}
+    </div>`;
+
+  messagesContainer.appendChild(d);
   scrollToBottom(true);
-  return block;
+  return d;
 }
 
 export function appendErrorMessage(text) {
-  const wrap = document.createElement("div");
-  wrap.className = "message error-msg";
-  wrap.innerHTML = `<div class="message-meta">error · ${timestamp()}</div><div class="message-body">⚠ ${escHtml(text)}</div>`;
-  messagesContainer.appendChild(wrap);
+  const el = makeMsg("err", "err", timestamp());
+  el.querySelector(".msg-body").innerHTML = `<p>⚠ ${escHtml(text)}</p>`;
+  messagesContainer.appendChild(el);
   scrollToBottom(true);
 }
 
-function escHtml(str) {
-  return String(str).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");
-}
-
-// Core send logic — shared by normal send and retry
+// Core send logic
 export async function executeSend(cid, text, imageFile, incognito, systemPrompt) {
   if (_streaming) return;
   if (!text && !imageFile) return;
@@ -416,6 +399,6 @@ export async function sendCurrentMessage(cid, incognito, systemPrompt) {
 
 function autoResizeTextarea() {
   messageInput.style.height = "auto";
-  messageInput.style.height = Math.min(messageInput.scrollHeight, 160) + "px";
+  messageInput.style.height = Math.min(messageInput.scrollHeight, 140) + "px";
 }
 messageInput.addEventListener("input", autoResizeTextarea);

@@ -2,10 +2,18 @@ import json
 import os
 import time
 import threading
-from flask import Flask, request, jsonify, Response, stream_with_context, send_from_directory
+from flask import Flask, request, jsonify, Response, stream_with_context, send_from_directory, \
+    render_template, redirect, url_for, session
+from werkzeug.exceptions import RequestEntityTooLarge
 from openai import OpenAI
+from PIL import Image, UnidentifiedImageError
 
 from config import config
+from auth import (
+    load_hash, verify_password,
+    is_rate_limited, record_failed, clear_failed,
+    make_csrf, valid_csrf, get_client_ip,
+)
 from database import (
     init_db, create_conversation, get_conversation, list_conversations,
     update_conversation, delete_conversation, add_message, get_messages,
@@ -17,9 +25,123 @@ from tools.python_sandbox import run_python, RUN_PYTHON_SCHEMA
 
 app = Flask(__name__, static_folder="static", template_folder="templates")
 app.secret_key = config.SECRET_KEY
+app.config["SESSION_COOKIE_HTTPONLY"] = config.SESSION_COOKIE_HTTPONLY
+app.config["SESSION_COOKIE_SAMESITE"] = config.SESSION_COOKIE_SAMESITE
+app.config["SESSION_COOKIE_SECURE"] = config.SESSION_COOKIE_SECURE
+app.config["PERMANENT_SESSION_LIFETIME"] = config.PERMANENT_SESSION_LIFETIME
+app.config["MAX_CONTENT_LENGTH"] = config.MAX_UPLOAD_BYTES
 
 os.makedirs(config.UPLOAD_DIR, exist_ok=True)
 init_db()
+
+Image.MAX_IMAGE_PIXELS = 25_000_000
+
+# ── Auth gate ─────────────────────────────────────────────────────────────────
+
+_PUBLIC_ENDPOINTS = {"login", "static"}
+_MUTATING_METHODS = {"POST", "PUT", "PATCH", "DELETE"}
+
+
+def _csrf_required() -> bool:
+    if request.method not in _MUTATING_METHODS:
+        return False
+    if request.endpoint in _PUBLIC_ENDPOINTS:
+        return False
+    return request.path.startswith("/api/") or request.endpoint == "logout"
+
+
+def _parse_int_arg(name: str, default: int, min_value: int, max_value: int) -> int:
+    raw = request.args.get(name, str(default)).strip()
+    try:
+        value = int(raw)
+    except ValueError:
+        raise ValueError(f"{name} must be an integer") from None
+    if value < min_value or value > max_value:
+        raise ValueError(f"{name} must be between {min_value} and {max_value}")
+    return value
+
+
+def _clean_text(value, max_len: int, default: str | None = None) -> str | None:
+    if value is None:
+        return default
+    text = str(value).strip()
+    if not text:
+        return default
+    return text[:max_len]
+
+
+def _save_uploaded_image(image_file):
+    if image_file.mimetype not in {"image/jpeg", "image/png", "image/webp", "image/gif"}:
+        raise ValueError("unsupported image type")
+
+    image_file.stream.seek(0)
+    try:
+        with Image.open(image_file.stream) as img:
+            img.verify()
+    except (UnidentifiedImageError, OSError, Image.DecompressionBombError):
+        raise ValueError("invalid image file") from None
+
+    image_file.stream.seek(0)
+    with Image.open(image_file.stream) as img:
+        normalized = img.convert("RGB")
+        normalized.thumbnail((2048, 2048))
+        fname = f"{new_id()}.jpg"
+        path = os.path.join(config.UPLOAD_DIR, fname)
+        normalized.save(path, format="JPEG", quality=90, optimize=True)
+    return path
+
+@app.before_request
+def require_auth():
+    if request.endpoint in _PUBLIC_ENDPOINTS:
+        return
+    if not session.get("authed"):
+        if request.path.startswith("/api/"):
+            return jsonify({"error": "authentication required"}), 401
+        return redirect(url_for("login"))
+
+    if _csrf_required():
+        token = request.headers.get("X-CSRF-Token", "")
+        if not token and not request.path.startswith("/api/"):
+            token = request.form.get("csrf_token", "")
+        if not valid_csrf(token):
+            if request.path.startswith("/api/"):
+                return jsonify({"error": "invalid csrf token"}), 403
+            return redirect(url_for("login"))
+
+
+@app.after_request
+def set_security_headers(response):
+    csp = "; ".join([
+        "default-src 'self'",
+        "script-src 'self'",
+        "style-src 'self' https://fonts.googleapis.com",
+        "font-src 'self' https://fonts.gstatic.com",
+        "img-src 'self' data: blob:",
+        "connect-src 'self'",
+        "worker-src 'self'",
+        "manifest-src 'self'",
+        "object-src 'none'",
+        "base-uri 'self'",
+        "frame-ancestors 'none'",
+        "form-action 'self'",
+    ])
+    response.headers.setdefault("Content-Security-Policy", csp)
+    response.headers.setdefault("Referrer-Policy", "no-referrer")
+    response.headers.setdefault("X-Content-Type-Options", "nosniff")
+    response.headers.setdefault("X-Frame-Options", "DENY")
+    response.headers.setdefault("Cross-Origin-Opener-Policy", "same-origin")
+    response.headers.setdefault("Cross-Origin-Resource-Policy", "same-origin")
+    response.headers.setdefault("Permissions-Policy", "geolocation=(), microphone=(), camera=()")
+    if request.is_secure:
+        response.headers.setdefault("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
+    return response
+
+
+@app.errorhandler(RequestEntityTooLarge)
+def handle_request_too_large(_e):
+    if request.path.startswith("/api/"):
+        return jsonify({"error": f"upload too large (max {config.MAX_UPLOAD_BYTES} bytes)"}), 413
+    return "Payload too large", 413
 
 client = OpenAI(
     api_key=config.OPENROUTER_API_KEY,
@@ -92,9 +214,55 @@ def get_models():
 
 # --- Routes ---
 
+@app.route("/login", methods=["GET", "POST"])
+def login():
+    setup_mode = not load_hash()
+
+    if request.method == "GET":
+        if session.get("authed"):
+            return redirect(url_for("index"))
+        return render_template("login.html", setup=setup_mode, error=None, csrf=make_csrf())
+
+    if setup_mode:
+        return render_template(
+            "login.html",
+            setup=True,
+            error="password not configured on server; run python3 set_password.py locally",
+            csrf=make_csrf(),
+        ), 503
+
+    # POST
+    ip = get_client_ip()
+    form_csrf = request.form.get("csrf_token", "")
+    if not valid_csrf(form_csrf):
+        return render_template("login.html", setup=setup_mode, error="invalid request", csrf=make_csrf()), 403
+
+    password = request.form.get("password", "")
+
+    # Normal login
+    if is_rate_limited(ip):
+        return render_template("login.html", setup=False, error="too many attempts — try again in 15 minutes", csrf=make_csrf()), 429
+
+    if verify_password(password):
+        clear_failed(ip)
+        session.clear()
+        session["authed"] = True
+        make_csrf()
+        session.permanent = True
+        return redirect(url_for("index"))
+
+    record_failed(ip)
+    return render_template("login.html", setup=False, error="invalid password", csrf=make_csrf())
+
+
+@app.route("/logout", methods=["POST"])
+def logout():
+    session.clear()
+    return redirect(url_for("login"))
+
+
 @app.route("/")
 def index():
-    from flask import render_template
     return render_template("index.html")
 
 @app.route("/uploads/<path:filename>")
@@ -105,27 +273,42 @@ def serve_upload(filename):
 def health():
     return jsonify({"status": "ok"})
 
+
+@app.route("/api/csrf", methods=["GET"])
+def api_csrf():
+    token = session.get("_csrf") or make_csrf()
+    return jsonify({"csrf_token": token})
+
 @app.route("/api/models")
 def api_models():
     try:
         return jsonify(get_models())
-    except Exception as e:
-        return jsonify({"error": str(e)}), 502
+    except Exception:
+        app.logger.exception("Failed to fetch models")
+        return jsonify({"error": "model provider unavailable"}), 502
 
 @app.route("/api/conversations", methods=["GET"])
 def api_list_conversations():
-    limit = int(request.args.get("limit", 50))
-    offset = int(request.args.get("offset", 0))
+    try:
+        limit = _parse_int_arg("limit", 50, 1, 200)
+        offset = _parse_int_arg("offset", 0, 0, 10000)
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
     return jsonify(list_conversations(limit, offset))
 
 @app.route("/api/conversations", methods=["POST"])
 def api_create_conversation():
-    data = request.get_json(force=True)
-    model_id = data.get("model_id", "openai/gpt-4o-mini")
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict):
+        return jsonify({"error": "invalid json payload"}), 400
+
+    model_id = _clean_text(data.get("model_id"), 200, "openai/gpt-4o-mini")
+    title = _clean_text(data.get("title"), 200, "New Chat")
+    system_prompt = _clean_text(data.get("system_prompt"), 10000, None)
     conv = create_conversation(
         model_id=model_id,
-        title=data.get("title", "New Chat"),
-        system_prompt=data.get("system_prompt"),
+        title=title,
+        system_prompt=system_prompt,
     )
     return jsonify(conv), 201
 
@@ -133,8 +316,22 @@ def api_create_conversation():
 def api_update_conversation(cid):
     if not get_conversation(cid):
         return jsonify({"error": "not found"}), 404
-    data = request.get_json(force=True)
-    conv = update_conversation(cid, **data)
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict):
+        return jsonify({"error": "invalid json payload"}), 400
+
+    cleaned = {}
+    if "title" in data:
+        cleaned["title"] = _clean_text(data.get("title"), 200, "New Chat")
+    if "system_prompt" in data:
+        cleaned["system_prompt"] = _clean_text(data.get("system_prompt"), 10000, None)
+    if "model_id" in data:
+        model_id = _clean_text(data.get("model_id"), 200, None)
+        if not model_id:
+            return jsonify({"error": "model_id cannot be empty"}), 400
+        cleaned["model_id"] = model_id
+
+    conv = update_conversation(cid, **cleaned)
     return jsonify(conv)
 
 @app.route("/api/conversations/<cid>", methods=["DELETE"])
@@ -163,20 +360,23 @@ def api_post_message(cid):
         history = get_messages(cid)
     else:
         # Pull model_id and system_prompt from form for incognito
-        model_id = request.form.get("model_id", "openai/gpt-4o-mini")
-        system_prompt = request.form.get("system_prompt")
+        model_id = _clean_text(request.form.get("model_id"), 200, "openai/gpt-4o-mini")
+        system_prompt = _clean_text(request.form.get("system_prompt"), 10000, None)
         history = []
 
-    user_text = request.form.get("message", "").strip()
+    user_text = _clean_text(request.form.get("message"), 20000, "") or ""
     image_file = request.files.get("image")
     reasoning_enabled = request.form.get("reasoning", "false").lower() == "true"
 
+    if not user_text and not image_file:
+        return jsonify({"error": "message or image is required"}), 400
+
     image_path = None
     if image_file:
-        ext = os.path.splitext(image_file.filename)[1].lower() or ".jpg"
-        fname = new_id() + ext
-        image_path = os.path.join(config.UPLOAD_DIR, fname)
-        image_file.save(image_path)
+        try:
+            image_path = _save_uploaded_image(image_file)
+        except ValueError as e:
+            return jsonify({"error": str(e)}), 400
 
     def generate():
         try:
@@ -190,8 +390,9 @@ def api_post_message(cid):
                 incognito=incognito,
                 reasoning_enabled=reasoning_enabled,
             )
-        except Exception as e:
-            yield f"data: {json.dumps({'type':'error','message':str(e)})}\n\n"
+        except Exception:
+            app.logger.exception("Message pipeline failed")
+            yield f"data: {json.dumps({'type':'error','message':'internal server error'})}\n\n"
 
     return Response(
         stream_with_context(generate()),
@@ -205,24 +406,37 @@ def api_post_message(cid):
 @app.route("/api/search")
 def api_search():
     q = request.args.get("q", "").strip()
-    limit = int(request.args.get("limit", 20))
+    try:
+        limit = _parse_int_arg("limit", 20, 1, 100)
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
     if not q:
         return jsonify([])
     try:
         return jsonify(search_messages(q, limit))
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
+    except Exception:
+        app.logger.exception("Search failed")
+        return jsonify({"error": "search unavailable"}), 500
 
 # --- Agentic loop ---
 
-TOOLS = [WEB_SEARCH_SCHEMA, WEB_FETCH_SCHEMA, RUN_PYTHON_SCHEMA]
+def _active_tools():
+    tools = [WEB_SEARCH_SCHEMA, WEB_FETCH_SCHEMA]
+    if config.ENABLE_UNSAFE_PYTHON_TOOL:
+        tools.append(RUN_PYTHON_SCHEMA)
+    return tools
 
-TOOL_USE_SYSTEM_PROMPT = (
-    "You have access to callable tools: web_search, web_fetch, and run_python. "
-    "When the user asks to use a tool, issue a tool call instead of describing a plan. "
-    "If a tool result is needed, call the tool first and then answer using that result. "
-    "Do not ask for confirmation unless required parameters are missing."
-)
+def _tool_use_system_prompt() -> str:
+    tool_names = ["web_search", "web_fetch"]
+    if config.ENABLE_UNSAFE_PYTHON_TOOL:
+        tool_names.append("run_python")
+    tools_joined = ", ".join(tool_names)
+    return (
+        f"You have access to callable tools: {tools_joined}. "
+        "When the user asks to use a tool, issue a tool call instead of describing a plan. "
+        "If a tool result is needed, call the tool first and then answer using that result. "
+        "Do not ask for confirmation unless required parameters are missing."
+    )
 
 def _model_supports_tools(model_id: str) -> bool:
     models = _models_cache.get("data") or []
@@ -236,7 +450,7 @@ def _compose_system_prompt(system_prompt, use_tools: bool):
     if system_prompt:
         parts.append(system_prompt.strip())
     if use_tools:
-        parts.append(TOOL_USE_SYSTEM_PROMPT)
+        parts.append(_tool_use_system_prompt())
     if not parts:
         return None
     return "\n\n".join(parts)
@@ -248,7 +462,7 @@ def _requested_tool_name(user_text: str):
     if "web_fetch" in text or "web fetch" in text or "fetch this url" in text or "fetch url" in text:
         return "web_fetch"
     if "run_python" in text or "run python" in text or "python tool" in text:
-        return "run_python"
+        return "run_python" if config.ENABLE_UNSAFE_PYTHON_TOOL else None
     return None
 
 def _build_openrouter_messages(system_prompt, history, user_text, image_path, use_tools):
@@ -306,7 +520,8 @@ def _sse(data: dict) -> str:
     return f"data: {json.dumps(data)}\n\n"
 
 def _agentic_loop(cid, model_id, system_prompt, history, user_text, image_path, incognito, reasoning_enabled=False):
-    use_tools = _model_supports_tools(model_id)
+    available_tools = _active_tools()
+    use_tools = _model_supports_tools(model_id) and bool(available_tools)
     force_tool_name = _requested_tool_name(user_text) if use_tools else None
     messages = _build_openrouter_messages(system_prompt, history, user_text, image_path, use_tools)
 
@@ -331,7 +546,7 @@ def _agentic_loop(cid, model_id, system_prompt, history, user_text, image_path, 
         if not is_google:
             create_kwargs["extra_body"] = reasoning_body
         if use_tools:
-            create_kwargs["tools"] = TOOLS
+            create_kwargs["tools"] = available_tools
             if force_tool_name:
                 create_kwargs["tool_choice"] = {
                     "type": "function",
@@ -458,9 +673,12 @@ def _agentic_loop(cid, model_id, system_prompt, history, user_text, image_path, 
                 elif fn_name == "web_fetch":
                     result = web_fetch(**fn_args)
                 elif fn_name == "run_python":
-                    result = run_python(**fn_args)
-                    if isinstance(result, dict) and result.get("image"):
-                        yield _sse({"type": "image_result", "data": result["image"], "mime": "image/png"})
+                    if config.ENABLE_UNSAFE_PYTHON_TOOL:
+                        result = run_python(**fn_args)
+                        if isinstance(result, dict) and result.get("image"):
+                            yield _sse({"type": "image_result", "data": result["image"], "mime": "image/png"})
+                    else:
+                        result = {"error": "run_python is disabled by server policy"}
                 else:
                     result = {"error": f"Unknown tool: {fn_name}"}
 

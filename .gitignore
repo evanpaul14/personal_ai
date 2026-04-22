@@ -1,4 +1,5 @@
 .env
+.auth_hash
 __pycache__/
 *.pyc
 *.pyo
@@ -9,3 +10,6 @@ uploads/
 venv/
 .venv/
 CLAUDE.md
+personal_ai.db-shm
+.gitignore
+personal_ai.db-wal

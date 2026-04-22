@@ -2,13 +2,14 @@ import { initModels, getCurrentModelId, currentModelSupportsVision, currentModel
 import {
   renderHistory, clearMessages, sendCurrentMessage, executeSend, isStreaming, appendUserMessage
 } from "./chat.js";
+import { initTweaks } from "./tweaks.js";
 import {
   loadConversations, setOnSelect, setActiveCid, getActiveCid,
   refreshConversations, bumpConversation
 } from "./history.js";
 import { setCurrentCid, setOnSave, setSystemPromptValue, getSystemPromptValue } from "./settings.js";
 import { initUpload, setVisionEnabled } from "./upload.js";
-import { createConversation, fetchMessages, searchChats } from "./api.js";
+import { createConversation, fetchMessages, initCsrfToken, searchChats } from "./api.js";
 
 // --- State ---
 let currentCid = null;
@@ -46,7 +47,7 @@ sidebarOverlay.addEventListener("click", closeSidebar);
 
 // Close sidebar on mobile after selecting a conversation
 function closeSidebarIfMobile() {
-  if (window.innerWidth < 768) closeSidebar();
+  if (window.innerWidth < 640) closeSidebar();
 }
 
 // --- New chat ---
@@ -127,7 +128,19 @@ messageInput.addEventListener("keydown", (e) => {
     e.preventDefault();
     handleSend();
   }
-  // Shift+Enter inserts newline (default textarea behavior)
+});
+
+// Global keyboard shortcuts
+document.addEventListener("keydown", (e) => {
+  // ^N — new chat (ignore when typing in an input/textarea)
+  if (e.key === "n" && (e.ctrlKey || e.metaKey) && !e.shiftKey) {
+    const tag = document.activeElement?.tagName;
+    if (tag === "TEXTAREA" || tag === "INPUT") return;
+    e.preventDefault();
+    startNewChat();
+    closeSidebarIfMobile();
+    messageInput.focus();
+  }
 });
 
 // --- Model change → update upload button + tools warning ---
@@ -166,7 +179,7 @@ document.addEventListener("retryMessage", async ({ detail }) => {
   while (el) {
     const prev = el.previousElementSibling;
     el.remove();
-    if (!prev || prev.classList.contains("message") && prev.classList.contains("user")) break;
+    if (!prev || (prev.classList.contains("msg") && prev.classList.contains("user"))) break;
     el = prev;
   }
   appendUserMessage(text, null, true);
@@ -255,7 +268,11 @@ function escHtml(str) {
 // --- Init ---
 async function init() {
   initUpload();
+  await initCsrfToken();
   await Promise.all([initModels(), loadConversations()]);
+
+  // Init tweaks panel (CRT effects, phosphor, etc.)
+  initTweaks();
 
   // Register service worker
   if ("serviceWorker" in navigator) {

@@ -79,7 +79,11 @@ function renderList(filter) {
   for (const [provider, models] of Object.entries(groups)) {
     const groupEl = document.createElement("div");
     groupEl.className = "model-group";
-    groupEl.innerHTML = `<div class="model-group-label">${provider}</div>`;
+
+    const label = document.createElement("div");
+    label.className = "model-group-label";
+    label.textContent = provider;
+    groupEl.appendChild(label);
 
     for (const m of models) {
       const opt = document.createElement("div");

@@ -7,6 +7,7 @@ import time
 from urllib.parse import urlparse
 
 import requests
+from config import config
 
 try:
     import cloudscraper as _cs_mod
@@ -39,7 +40,7 @@ WEB_FETCH_SCHEMA = {
         "description": (
             "Fetch a URL and return its readable text content (HTML is converted to markdown). "
             "Use this to read a specific webpage, article, or documentation page. "
-            "Executes JavaScript and bypasses anti-bot protection."
+            "May execute JavaScript only when browser fetching is enabled by server policy."
         ),
         "parameters": {
             "type": "object",
@@ -80,12 +81,18 @@ _CACHE: dict = {}
 _CACHE_TTL = 900  # 15 minutes
 
 _PRIVATE_RANGES = [
+    ipaddress.ip_network("0.0.0.0/8"),
     ipaddress.ip_network("10.0.0.0/8"),
+    ipaddress.ip_network("100.64.0.0/10"),
     ipaddress.ip_network("172.16.0.0/12"),
     ipaddress.ip_network("192.168.0.0/16"),
+    ipaddress.ip_network("198.18.0.0/15"),
+    ipaddress.ip_network("224.0.0.0/4"),
+    ipaddress.ip_network("240.0.0.0/4"),
     ipaddress.ip_network("127.0.0.0/8"),
     ipaddress.ip_network("169.254.0.0/16"),
     ipaddress.ip_network("::1/128"),
+    ipaddress.ip_network("fe80::/10"),
     ipaddress.ip_network("fc00::/7"),
 ]
 
@@ -109,6 +116,14 @@ def _is_private(hostname: str) -> bool:
     except Exception:
         pass
     return False
+
+
+def _is_private_ip(addr: str) -> bool:
+    try:
+        ip = ipaddress.ip_address(addr)
+    except ValueError:
+        return True
+    return any(ip in net for net in _PRIVATE_RANGES)
 
 def _check_url(url: str) -> str | None:
     parsed = urlparse(url)
@@ -228,7 +243,18 @@ def _requests_fetch(url: str, use_cloudscraper: bool) -> str:
         )
     else:
         session = requests.Session()
+    session.trust_env = False
     _, resp = _follow_redirects(session, url, timeout=15)
+    try:
+        peer_ip = resp.raw._connection.sock.getpeername()[0]
+        if _is_private_ip(peer_ip):
+            raise ValueError(f"Connected to blocked private address: {peer_ip}")
+    except ValueError:
+        raise
+    except Exception:
+        # If peer IP is unavailable, continue with prior URL-based checks.
+        pass
+
     resp.raise_for_status()
     content_type = resp.headers.get("content-type", "")
     if "html" in content_type:
@@ -238,6 +264,11 @@ def _requests_fetch(url: str, use_cloudscraper: bool) -> str:
 # ── Public entry point ────────────────────────────────────────────────────────
 
 def web_fetch(url: str, max_chars: int = 8000) -> dict:
+    try:
+        max_chars = max(500, min(int(max_chars), 50000))
+    except (TypeError, ValueError):
+        max_chars = 8000
+
     cache_key = url
     if cache_key in _CACHE:
         entry = _CACHE[cache_key]
@@ -253,7 +284,7 @@ def web_fetch(url: str, max_chars: int = 8000) -> dict:
     last_error = None
 
     # Primary: crawl4ai real browser
-    if _CRAWL4AI:
+    if config.ENABLE_BROWSER_FETCH and _CRAWL4AI:
         try:
             text = _crawl4ai_fetch(url)
         except Exception as e:

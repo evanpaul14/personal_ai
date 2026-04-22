@@ -18,9 +18,15 @@ WEB_SEARCH_SCHEMA = {
 }
 
 def web_search(query: str, num_results: int = 5) -> dict:
-    params = {"q": query, "format": "json"}
     try:
-        r = requests.get("http://evans-rasberry-pi.local:8888/search", params=params, timeout=10)
+        num_results = int(num_results)
+    except (TypeError, ValueError):
+        num_results = 5
+    num_results = max(1, min(num_results, 10))
+    params = {"q": query, "format": "json"}
+    base = config.SEARXNG_URL.rstrip("/")
+    try:
+        r = requests.get(f"{base}/search", params=params, timeout=10)
         r.raise_for_status()
         data = r.json()
     except Exception as e:

@@ -1,9 +1,55 @@
 // All backend fetch wrappers + SSE stream consumer
 
 const BASE = "";
+let csrfToken = null;
+let csrfInFlight = null;
 
-async function apiFetch(path, options = {}) {
-  const res = await fetch(BASE + path, options);
+function needsCsrf(method = "GET") {
+  return ["POST", "PUT", "PATCH", "DELETE"].includes(String(method).toUpperCase());
+}
+
+export async function initCsrfToken(force = false) {
+  if (csrfToken && !force) return csrfToken;
+  if (csrfInFlight && !force) return csrfInFlight;
+
+  csrfInFlight = fetch(BASE + "/api/csrf", {
+    method: "GET",
+    credentials: "same-origin",
+  })
+    .then(async (res) => {
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const body = await res.json();
+      csrfToken = body.csrf_token || null;
+      return csrfToken;
+    })
+    .finally(() => {
+      csrfInFlight = null;
+    });
+
+  return csrfInFlight;
+}
+
+async function apiFetch(path, options = {}, allowRetry = true) {
+  const method = (options.method || "GET").toUpperCase();
+  const headers = new Headers(options.headers || {});
+
+  if (needsCsrf(method)) {
+    if (!csrfToken) await initCsrfToken();
+    if (csrfToken) headers.set("X-CSRF-Token", csrfToken);
+  }
+
+  const res = await fetch(BASE + path, {
+    ...options,
+    method,
+    headers,
+    credentials: "same-origin",
+  });
+
+  if (res.status === 403 && needsCsrf(method) && allowRetry) {
+    await initCsrfToken(true);
+    return apiFetch(path, options, false);
+  }
+
   if (!res.ok) {
     let msg = `HTTP ${res.status}`;
     try { const j = await res.json(); msg = j.error || msg; } catch {}
@@ -74,10 +120,26 @@ export async function* sendMessage(cid, text, imageFile, incognito, modelId, sys
     if (systemPrompt) form.append("system_prompt", systemPrompt);
   }
 
-  const res = await fetch(`/api/conversations/${cid}/messages`, {
+  if (!csrfToken) await initCsrfToken();
+  const headers = csrfToken ? { "X-CSRF-Token": csrfToken } : {};
+
+  let res = await fetch(`/api/conversations/${cid}/messages`, {
     method: "POST",
+    headers,
     body: form,
+    credentials: "same-origin",
   });
+
+  if (res.status === 403) {
+    await initCsrfToken(true);
+    const retryHeaders = csrfToken ? { "X-CSRF-Token": csrfToken } : {};
+    res = await fetch(`/api/conversations/${cid}/messages`, {
+      method: "POST",
+      headers: retryHeaders,
+      body: form,
+      credentials: "same-origin",
+    });
+  }
 
   if (!res.ok) {
     let msg = `HTTP ${res.status}`;
