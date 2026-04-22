@@ -13,7 +13,7 @@ from config import config
 from auth import (
     load_hash, verify_password,
     is_rate_limited, record_failed, clear_failed,
-    make_csrf, valid_csrf, get_client_ip,
+    make_csrf, valid_csrf, get_client_ip, request_has_same_origin,
 )
 from database import (
     init_db, create_conversation, get_conversation, list_conversations,
@@ -237,7 +237,7 @@ def login():
     # POST
     ip = get_client_ip()
     form_csrf = request.form.get("csrf_token", "")
-    if not valid_csrf(form_csrf):
+    if not valid_csrf(form_csrf) and not request_has_same_origin():
         return render_template("login.html", setup=setup_mode, error="invalid request", csrf=make_csrf()), 403
 
     password = request.form.get("password", "")

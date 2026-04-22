@@ -7,6 +7,7 @@ The LOGIN_PASSWORD_HASH env var overrides the file.
 import os
 import time
 import secrets
+from urllib.parse import urlsplit
 from functools import wraps
 from flask import session, redirect, url_for, request
 from werkzeug.security import generate_password_hash, check_password_hash
@@ -66,6 +67,44 @@ def make_csrf() -> str:
 def valid_csrf(token: str) -> bool:
     expected = session.get("_csrf", "")
     return bool(expected and token and secrets.compare_digest(expected, token))
+
+
+def _normalized_origin(value: str) -> str | None:
+    if not value:
+        return None
+    try:
+        parsed = urlsplit(value)
+    except ValueError:
+        return None
+    if not parsed.scheme or not parsed.netloc:
+        return None
+    return f"{parsed.scheme.lower()}://{parsed.netloc.lower()}"
+
+
+def request_has_same_origin() -> bool:
+    """Validate browser Origin/Referer against current or forwarded host."""
+    allowed_origins: set[str] = set()
+
+    host_origin = _normalized_origin(request.host_url)
+    if host_origin:
+        allowed_origins.add(host_origin)
+
+    xf_proto = request.headers.get("X-Forwarded-Proto", "").split(",", 1)[0].strip()
+    xf_host = request.headers.get("X-Forwarded-Host", "").split(",", 1)[0].strip()
+    if xf_proto and xf_host:
+        forwarded_origin = _normalized_origin(f"{xf_proto}://{xf_host}")
+        if forwarded_origin:
+            allowed_origins.add(forwarded_origin)
+
+    origin = _normalized_origin(request.headers.get("Origin", ""))
+    if origin:
+        return origin in allowed_origins
+
+    referer = _normalized_origin(request.headers.get("Referer", ""))
+    if referer:
+        return referer in allowed_origins
+
+    return False
 
 
 # ── Password hash storage ─────────────────────────────────────────────────────
