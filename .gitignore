@@ -9,7 +9,6 @@ uploads/
 *.sqlite
 venv/
 .venv/
-CLAUDE.md
 personal_ai.db-shm
 .gitignore
 personal_ai.db-wal
