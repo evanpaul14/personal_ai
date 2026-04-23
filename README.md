@@ -82,6 +82,5 @@ Core values:
 
 ## Notes
 
-- Password hashes are stored in `.auth_hash` (ignored by git).
 - `set_password.py` must be run in a real interactive terminal.
 - For production, run behind HTTPS and set secure cookie/proxy settings accordingly.
