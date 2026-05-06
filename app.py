@@ -644,6 +644,7 @@ def _agentic_loop(cid, model_id, system_prompt, history, user_text, image_path, 
         finish_reason = None
         usage = None
         google_thought_active = False
+        nim_think_active = False
 
         for chunk in stream:
             choice = chunk.choices[0] if chunk.choices else None
@@ -658,6 +659,10 @@ def _agentic_loop(cid, model_id, system_prompt, history, user_text, image_path, 
 
             # OpenRouter reasoning field (DeepSeek R1, etc.)
             reasoning_text = getattr(delta, "reasoning", None)
+            # NIM reasoning_content field (QwQ, Nemotron, etc.)
+            if not reasoning_text:
+                raw = chunk.model_dump().get("choices", [{}])[0].get("delta", {}) if is_nim else {}
+                reasoning_text = raw.get("reasoning_content") or None
             if reasoning_text:
                 reasoning_parts.append(reasoning_text)
                 yield _sse({"type": "reasoning_delta", "delta": reasoning_text})
@@ -684,6 +689,36 @@ def _agentic_loop(cid, model_id, system_prompt, history, user_text, image_path, 
                         if content:
                             content_parts.append(content)
                             yield _sse({"type": "content_delta", "delta": content})
+                elif is_nim:
+                    # NIM thinking models embed reasoning in <think>...</think> tags in content
+                    content = delta.content
+                    while content:
+                        if nim_think_active:
+                            end = content.find("</think>")
+                            if end == -1:
+                                reasoning_parts.append(content)
+                                yield _sse({"type": "reasoning_delta", "delta": content})
+                                content = ""
+                            else:
+                                chunk_r = content[:end]
+                                if chunk_r:
+                                    reasoning_parts.append(chunk_r)
+                                    yield _sse({"type": "reasoning_delta", "delta": chunk_r})
+                                nim_think_active = False
+                                content = content[end + len("</think>"):]
+                        else:
+                            start = content.find("<think>")
+                            if start == -1:
+                                content_parts.append(content)
+                                yield _sse({"type": "content_delta", "delta": content})
+                                content = ""
+                            else:
+                                chunk_c = content[:start]
+                                if chunk_c:
+                                    content_parts.append(chunk_c)
+                                    yield _sse({"type": "content_delta", "delta": chunk_c})
+                                nim_think_active = True
+                                content = content[start + len("<think>"):]
                 else:
                     content_parts.append(delta.content)
                     yield _sse({"type": "content_delta", "delta": delta.content})
