@@ -2,6 +2,7 @@ flask>=3.0.0
 python-dotenv>=1.0.0
 httpx>=0.27.0
 requests>=2.31.0
+brotli>=1.0.0
 openai>=1.40.0
 beautifulsoup4>=4.12.0
 html2text>=2024.2.26
@@ -10,3 +11,6 @@ Pillow>=10.0.0
 numpy
 pandas
 matplotlib
+# Optional: enhanced web fetching (web_fetch.py gracefully degrades without these)
+cloudscraper>=1.2.71
+crawl4ai>=0.4.0
