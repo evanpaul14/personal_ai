@@ -163,61 +163,91 @@ nim_client = OpenAI(
     base_url=config.NVIDIA_NIM_BASE_URL,
 ) if config.NVIDIA_NIM_API_KEY else None
 
+def _nim(org_model, name, context_length=131072, supports_tools=True, supports_vision=False):
+    return {
+        "id": f"nvidia-nim/{org_model}",
+        "name": f"{name} (NIM)",
+        "context_length": context_length,
+        "supports_vision": supports_vision,
+        "supports_tools": supports_tools,
+        "input_modalities": ["text", "image"] if supports_vision else ["text"],
+        "pricing": {},
+    }
+
 NVIDIA_NIM_EXTRA_MODELS = [
-    {
-        "id": "nvidia-nim/meta/llama-4-scout-17b-16e-instruct",
-        "name": "Llama 4 Scout 17B Instruct (NIM)",
-        "context_length": 10485760,
-        "supports_vision": True,
-        "supports_tools": True,
-        "input_modalities": ["text", "image"],
-        "pricing": {},
-    },
-    {
-        "id": "nvidia-nim/meta/llama-4-maverick-17b-128e-instruct",
-        "name": "Llama 4 Maverick 17B Instruct (NIM)",
-        "context_length": 1048576,
-        "supports_vision": True,
-        "supports_tools": True,
-        "input_modalities": ["text", "image"],
-        "pricing": {},
-    },
-    {
-        "id": "nvidia-nim/nvidia/llama-3.1-nemotron-ultra-253b-v1",
-        "name": "Llama 3.1 Nemotron Ultra 253B (NIM)",
-        "context_length": 131072,
-        "supports_vision": False,
-        "supports_tools": True,
-        "input_modalities": ["text"],
-        "pricing": {},
-    },
-    {
-        "id": "nvidia-nim/nvidia/llama-3.3-nemotron-super-49b-v1",
-        "name": "Llama 3.3 Nemotron Super 49B (NIM)",
-        "context_length": 131072,
-        "supports_vision": False,
-        "supports_tools": True,
-        "input_modalities": ["text"],
-        "pricing": {},
-    },
-    {
-        "id": "nvidia-nim/deepseek-ai/deepseek-r1-0528",
-        "name": "DeepSeek R1 0528 (NIM)",
-        "context_length": 163840,
-        "supports_vision": False,
-        "supports_tools": False,
-        "input_modalities": ["text"],
-        "pricing": {},
-    },
-    {
-        "id": "nvidia-nim/qwen/qwq-32b",
-        "name": "QwQ 32B (NIM)",
-        "context_length": 32768,
-        "supports_vision": False,
-        "supports_tools": True,
-        "input_modalities": ["text"],
-        "pricing": {},
-    },
+    # abacusai
+    _nim("abacusai/dracarys-llama-3.1-70b-instruct", "Dracarys Llama 3.1 70B Instruct"),
+    # bytedance
+    _nim("bytedance/seed-oss-36b-instruct", "Seed OSS 36B Instruct"),
+    # deepseek-ai
+    _nim("deepseek-ai/deepseek-v3.1-terminus", "DeepSeek V3.1 Terminus"),
+    _nim("deepseek-ai/deepseek-v3.2", "DeepSeek V3.2"),
+    _nim("deepseek-ai/deepseek-v4-flash", "DeepSeek V4 Flash"),
+    _nim("deepseek-ai/deepseek-v4-pro", "DeepSeek V4 Pro"),
+    # google
+    _nim("google/codegemma-7b", "CodeGemma 7B", context_length=8192),
+    _nim("google/gemma-2-2b-it", "Gemma 2 2B Instruct", context_length=8192),
+    _nim("google/gemma-7b", "Gemma 7B", context_length=8192),
+    # meta
+    _nim("meta/llama2-70b", "Llama 2 70B", context_length=4096),
+    _nim("meta/llama-3.1-8b-instruct", "Llama 3.1 8B Instruct", context_length=131072),
+    _nim("meta/llama-3.1-70b-instruct", "Llama 3.1 70B Instruct", context_length=131072),
+    _nim("meta/llama-3.2-1b-instruct", "Llama 3.2 1B Instruct", context_length=131072),
+    _nim("meta/llama-3.2-3b-instruct", "Llama 3.2 3B Instruct", context_length=131072),
+    _nim("meta/llama-3.3-70b-instruct", "Llama 3.3 70B Instruct", context_length=131072),
+    # microsoft
+    _nim("microsoft/phi-4-mini-instruct", "Phi-4 Mini Instruct", context_length=131072),
+    _nim("microsoft/phi-4-mini-flash-reasoning", "Phi-4 Mini Flash Reasoning", context_length=131072, supports_tools=False),
+    # minimaxai
+    _nim("minimaxai/minimax-m2.5", "MiniMax M2.5"),
+    _nim("minimaxai/minimax-m2.7", "MiniMax M2.7"),
+    # mistralai
+    _nim("mistralai/devstral-2-123b-instruct-2512", "Devstral 2 123B Instruct"),
+    _nim("mistralai/magistral-small-2506", "Magistral Small 2506", supports_tools=False),
+    _nim("mistralai/mistral-7b-instruct-v0.3", "Mistral 7B Instruct v0.3", context_length=32768),
+    _nim("mistralai/mistral-nemotron", "Mistral Nemotron"),
+    _nim("mistralai/mixtral-8x22b-instruct", "Mixtral 8x22B Instruct", context_length=65536),
+    _nim("mistralai/mixtral-8x7b-instruct", "Mixtral 8x7B Instruct", context_length=32768),
+    # moonshotai
+    _nim("moonshotai/kimi-k2-instruct", "Kimi K2 Instruct"),
+    _nim("moonshotai/kimi-k2-instruct-0905", "Kimi K2 Instruct 0905"),
+    _nim("moonshotai/kimi-k2-thinking", "Kimi K2 Thinking", supports_tools=False),
+    # nvidia
+    _nim("nvidia/llama-3.1-nemoguard-8b-content-safety", "Llama 3.1 NemoGuard 8B Content Safety", context_length=32768),
+    _nim("nvidia/llama-3.1-nemoguard-8b-topic-control", "Llama 3.1 NemoGuard 8B Topic Control", context_length=32768),
+    _nim("nvidia/llama-3.1-nemotron-nano-8b-v1", "Llama 3.1 Nemotron Nano 8B v1", context_length=131072),
+    _nim("nvidia/llama-3.1-nemotron-safety-guard-8b-v3", "Llama 3.1 Nemotron Safety Guard 8B v3", context_length=32768),
+    _nim("nvidia/llama-3.3-nemotron-super-49b-v1", "Llama 3.3 Nemotron Super 49B v1"),
+    _nim("nvidia/llama-3.3-nemotron-super-49b-v1.5", "Llama 3.3 Nemotron Super 49B v1.5"),
+    _nim("nvidia/llama-3.1-nemotron-ultra-253b-v1", "Llama 3.1 Nemotron Ultra 253B v1"),
+    _nim("nvidia/nemotron-3-nano-30b-a3b", "Nemotron 3 Nano 30B A3B"),
+    _nim("nvidia/nemotron-3-super-120b-a12b", "Nemotron 3 Super 120B A12B"),
+    _nim("nvidia/nemotron-content-safety-reasoning-4b", "Nemotron Content Safety Reasoning 4B", context_length=32768, supports_tools=False),
+    _nim("nvidia/nemotron-mini-4b-instruct", "Nemotron Mini 4B Instruct", context_length=4096),
+    _nim("nvidia/nvidia-nemotron-nano-9b-v2", "Nemotron Nano 9B v2", context_length=131072),
+    _nim("nvidia/riva-translate-4b-instruct-v1_1", "Riva Translate 4B Instruct", context_length=4096),
+    _nim("nvidia/usdcode", "USD Code"),
+    # openai (NIM-hosted OSS)
+    _nim("openai/gpt-oss-20b", "GPT OSS 20B"),
+    _nim("openai/gpt-oss-120b", "GPT OSS 120B"),
+    # qwen
+    _nim("qwen/qwen2.5-coder-7b-instruct", "Qwen 2.5 Coder 7B Instruct", context_length=32768),
+    _nim("qwen/qwen3-5-122b-a10b", "Qwen3-5 122B A10B"),
+    _nim("qwen/qwen3-coder-480b-a35b-instruct", "Qwen3 Coder 480B A35B Instruct"),
+    _nim("qwen/qwen3-next-80b-a3b-instruct", "Qwen3 Next 80B A3B Instruct"),
+    _nim("qwen/qwen3-next-80b-a3b-thinking", "Qwen3 Next 80B A3B Thinking", supports_tools=False),
+    _nim("qwen/qwq-32b", "QwQ 32B", context_length=32768),
+    # sarvamai
+    _nim("sarvamai/sarvam-m", "Sarvam M"),
+    # stepfun-ai
+    _nim("stepfun-ai/step-3-5-flash", "Step 3.5 Flash"),
+    # stockmark
+    _nim("stockmark/stockmark-2-100b-instruct", "Stockmark 2 100B Instruct"),
+    # upstage
+    _nim("upstage/solar-10.7b-instruct", "Solar 10.7B Instruct", context_length=32768),
+    # z-ai
+    _nim("z-ai/glm4.7", "GLM 4.7"),
+    _nim("z-ai/glm5.1", "GLM 5.1"),
 ]
 
 GOOGLE_AI_STUDIO_EXTRA_MODELS = [
