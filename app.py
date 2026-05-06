@@ -733,7 +733,7 @@ def _agentic_loop(cid, model_id, system_prompt, history, user_text, image_path, 
             break
 
     # Persist to DB
-    if not incognito:
+    if not incognito and get_conversation(cid):
         # Save the user message first
         user_msg_id = add_message(
             cid, "user", user_text,
