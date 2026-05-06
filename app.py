@@ -158,6 +158,68 @@ google_client = OpenAI(
     base_url=config.GOOGLE_AI_STUDIO_BASE_URL,
 ) if config.GOOGLE_AI_STUDIO_API_KEY else None
 
+nim_client = OpenAI(
+    api_key=config.NVIDIA_NIM_API_KEY or "placeholder",
+    base_url=config.NVIDIA_NIM_BASE_URL,
+) if config.NVIDIA_NIM_API_KEY else None
+
+NVIDIA_NIM_EXTRA_MODELS = [
+    {
+        "id": "nvidia-nim/meta/llama-4-scout-17b-16e-instruct",
+        "name": "Llama 4 Scout 17B Instruct (NIM)",
+        "context_length": 10485760,
+        "supports_vision": True,
+        "supports_tools": True,
+        "input_modalities": ["text", "image"],
+        "pricing": {},
+    },
+    {
+        "id": "nvidia-nim/meta/llama-4-maverick-17b-128e-instruct",
+        "name": "Llama 4 Maverick 17B Instruct (NIM)",
+        "context_length": 1048576,
+        "supports_vision": True,
+        "supports_tools": True,
+        "input_modalities": ["text", "image"],
+        "pricing": {},
+    },
+    {
+        "id": "nvidia-nim/nvidia/llama-3.1-nemotron-ultra-253b-v1",
+        "name": "Llama 3.1 Nemotron Ultra 253B (NIM)",
+        "context_length": 131072,
+        "supports_vision": False,
+        "supports_tools": True,
+        "input_modalities": ["text"],
+        "pricing": {},
+    },
+    {
+        "id": "nvidia-nim/nvidia/llama-3.3-nemotron-super-49b-v1",
+        "name": "Llama 3.3 Nemotron Super 49B (NIM)",
+        "context_length": 131072,
+        "supports_vision": False,
+        "supports_tools": True,
+        "input_modalities": ["text"],
+        "pricing": {},
+    },
+    {
+        "id": "nvidia-nim/deepseek-ai/deepseek-r1-0528",
+        "name": "DeepSeek R1 0528 (NIM)",
+        "context_length": 163840,
+        "supports_vision": False,
+        "supports_tools": False,
+        "input_modalities": ["text"],
+        "pricing": {},
+    },
+    {
+        "id": "nvidia-nim/qwen/qwq-32b",
+        "name": "QwQ 32B (NIM)",
+        "context_length": 32768,
+        "supports_vision": False,
+        "supports_tools": True,
+        "input_modalities": ["text"],
+        "pricing": {},
+    },
+]
+
 GOOGLE_AI_STUDIO_EXTRA_MODELS = [
     {
         "id": "google-ai-studio/gemma-4-26b-a4b-it",
@@ -210,6 +272,8 @@ def get_models():
             "pricing": m.get("pricing", {}),
         })
     parsed.sort(key=lambda x: x["name"].lower())
+    if config.NVIDIA_NIM_API_KEY:
+        parsed = NVIDIA_NIM_EXTRA_MODELS + parsed
     if config.GOOGLE_AI_STUDIO_API_KEY:
         parsed = GOOGLE_AI_STUDIO_EXTRA_MODELS + parsed
     with _models_lock:
@@ -550,8 +614,19 @@ def _agentic_loop(cid, model_id, system_prompt, history, user_text, image_path, 
     is_first_message = not incognito and len(history) == 0
 
     is_google = model_id.startswith("google-ai-studio/")
-    api_model_id = model_id[len("google-ai-studio/"):] if is_google else model_id
-    active_client = google_client if is_google and google_client else client
+    is_nim = model_id.startswith("nvidia-nim/")
+    if is_google:
+        api_model_id = model_id[len("google-ai-studio/"):]
+    elif is_nim:
+        api_model_id = model_id[len("nvidia-nim/"):]
+    else:
+        api_model_id = model_id
+    if is_google and google_client:
+        active_client = google_client
+    elif is_nim and nim_client:
+        active_client = nim_client
+    else:
+        active_client = client
 
     reasoning_body = {"reasoning": {"effort": "medium"}} if reasoning_enabled else {"reasoning": {"exclude": True}}
     if not use_tools:
@@ -563,7 +638,7 @@ def _agentic_loop(cid, model_id, system_prompt, history, user_text, image_path, 
             messages=messages,
             stream=True,
         )
-        if not is_google:
+        if not is_google and not is_nim:
             create_kwargs["extra_body"] = reasoning_body
         if use_tools:
             create_kwargs["tools"] = available_tools

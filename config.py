@@ -19,6 +19,8 @@ class Config:
     OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
     GOOGLE_AI_STUDIO_API_KEY = os.getenv("GOOGLE_AI_STUDIO_API_KEY", "")
     GOOGLE_AI_STUDIO_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/openai/"
+    NVIDIA_NIM_API_KEY = os.getenv("NVIDIA_NIM_API_KEY", "")
+    NVIDIA_NIM_BASE_URL = "https://integrate.api.nvidia.com/v1"
     SEARXNG_URL = os.getenv("SEARXNG_URL", "http://evans-rasberry-pi.local:8888")
     SECRET_KEY = os.getenv("SECRET_KEY", "").strip()
     DB_PATH = os.getenv("DB_PATH", "personal_ai.db")

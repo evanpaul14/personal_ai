@@ -25,6 +25,7 @@ OPENROUTER_API_KEY=...           # required
 SECRET_KEY=...                   # required, ≥32 chars; generate with: openssl rand -base64 32
 FLASK_ENV=development            # disables SESSION_COOKIE_SECURE for local http
 GOOGLE_AI_STUDIO_API_KEY=...     # optional
+NVIDIA_NIM_API_KEY=...           # optional; enables NVIDIA NIM models (nvidia-nim/ prefix)
 SEARXNG_URL=http://...           # optional, defaults to evans-rasberry-pi.local:8888
 TRUST_X_FORWARDED_FOR=true       # set when behind a reverse proxy
 SESSION_COOKIE_SECURE=true       # force secure cookies (auto-true when not FLASK_ENV=development)
@@ -47,6 +48,7 @@ Single-user personal AI chat app. Flask backend + vanilla JS frontend (no bundle
 - **SQLite** (`personal_ai.db`, WAL mode) stores conversations and messages; FTS5 virtual table with triggers enables full-text search; `_migrate()` handles schema additions (e.g. adding `reasoning` column)
 - **OpenRouter** is the primary AI provider — accessed via the `openai` Python SDK pointed at `https://openrouter.ai/api/v1`
 - **Google AI Studio** is a secondary provider; model IDs prefixed `google-ai-studio/` route to a separate `google_client`; thinking chunks are detected via `extra_content.google.thought` in the raw delta
+- **NVIDIA NIM** is an optional provider; model IDs prefixed `nvidia-nim/` route to a separate `nim_client` pointed at `integrate.api.nvidia.com/v1`; OpenRouter's `extra_body` reasoning field is not sent to NIM
 - **SSE streaming**: `POST /api/conversations/:id/messages` returns `text/event-stream`. The agentic loop (model → tool call → result → model) runs server-side and emits typed events: `content_delta`, `reasoning_delta`, `tool_call`, `tool_result`, `image_result`, `tools_warning`, `done`, `error`
 - **Model capabilities** (`supports_vision`, `supports_tools`) are parsed from the OpenRouter `/models` response and cached in memory for 10 minutes; `supports_tools=False` omits the tools array and emits a `tools_warning` SSE event
 
